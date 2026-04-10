@@ -75,6 +75,98 @@ const state = {
 };
 
 // ==========================================
+// 1.5) CLOUD (Firebase / Firestore)
+// ==========================================
+
+const FIREBASE_CONFIG = {
+    apiKey: 'AIzaSyAaYedR9Fd_zN4JysvBkUYbil4S6xgkQhU',
+    authDomain: 'sosed-9a6bc.firebaseapp.com',
+    projectId: 'sosed-9a6bc',
+    storageBucket: 'sosed-9a6bc.firebasestorage.app',
+    messagingSenderId: '441158905440',
+    appId: '1:441158905440:web:4e1a1b7b8d2355a9205d05',
+    measurementId: 'G-CCTTZEVTTN'
+};
+
+let cloud = {
+    enabled: false,
+    db: null,
+    unsubOrders: null,
+    unsubMasters: null
+};
+
+function initCloud() {
+    if (typeof firebase === 'undefined') return;
+    try {
+        if (!firebase.apps || !firebase.apps.length) {
+            firebase.initializeApp(FIREBASE_CONFIG);
+        }
+        cloud.db = firebase.firestore();
+        cloud.enabled = true;
+    } catch (e) {
+        console.error('Firebase init failed', e);
+        cloud.enabled = false;
+        cloud.db = null;
+    }
+}
+
+function isCloudReady() {
+    return Boolean(cloud.enabled && cloud.db);
+}
+
+function startCloudSubscriptions() {
+    if (!isCloudReady()) return;
+
+    if (typeof cloud.unsubOrders === 'function') cloud.unsubOrders();
+    if (typeof cloud.unsubMasters === 'function') cloud.unsubMasters();
+
+    cloud.unsubOrders = cloud.db
+        .collection('orders')
+        .onSnapshot((snap) => {
+            state.orders = snap.docs
+                .map((d) => ({ id: d.id, ...d.data() }))
+                .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+            persistOrders();
+            renderFeeds();
+            if (dom.screens && dom.screens.my && !dom.screens.my.classList.contains('hidden')) renderMy();
+        }, (err) => {
+            console.error('orders snapshot error', err);
+        });
+
+    cloud.unsubMasters = cloud.db
+        .collection('masters')
+        .onSnapshot((snap) => {
+            state.masters = snap.docs
+                .map((d) => ({ id: d.id, ...d.data() }))
+                .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+            persistMasters();
+            renderFeeds();
+            if (dom.screens && dom.screens.my && !dom.screens.my.classList.contains('hidden')) renderMy();
+        }, (err) => {
+            console.error('masters snapshot error', err);
+        });
+}
+
+async function cloudUpsert(kind, item) {
+    if (!isCloudReady() || !item || !item.id) return;
+    const createdAt = Number(item.createdAt) || Date.now();
+    try {
+        await cloud.db.collection(kind).doc(String(item.id)).set({ ...item, createdAt }, { merge: true });
+    } catch (e) {
+        console.error(`cloudUpsert(${kind}) failed`, e);
+    }
+}
+
+async function cloudDelete(kind, id) {
+    if (!isCloudReady() || !id) return;
+    try {
+        await cloud.db.collection(kind).doc(String(id)).delete();
+    } catch (e) {
+        console.error(`cloudDelete(${kind}) failed`, e);
+    }
+}
+
+// ==========================================
 // 2) DOM (ссылки на элементы)
 // ==========================================
 
@@ -712,11 +804,13 @@ async function handleFeedClick(e) {
             const idx = state.masters.findIndex((m) => String(m.id) === String(id));
             if (idx >= 0) state.masters.splice(idx, 1);
             persistMasters();
+            cloudDelete('masters', id);
             renderFeeds();
         } else if (kind === 'order') {
             const idx = state.orders.findIndex((o) => String(o.id) === String(id));
             if (idx >= 0) state.orders.splice(idx, 1);
             persistOrders();
+            cloudDelete('orders', id);
             renderFeeds();
         }
         return;
@@ -753,7 +847,7 @@ async function submitOrder() {
         return;
     }
 
-    state.orders.unshift({
+    const order = {
         id: `o_${Date.now()}`,
         title,
         cat,
@@ -767,10 +861,14 @@ async function submitOrder() {
         lat: state.location.lat,
         lon: state.location.lon,
         status: 'Активен',
-        assignedMasterPhone: null
-    });
+        assignedMasterPhone: null,
+        createdAt: Date.now()
+    };
+
+    state.orders.unshift(order);
 
     persistOrders();
+    cloudUpsert('orders', order);
 
     dom.forms['create-order'].reset();
     state.activeFeed = 'orders';
@@ -806,7 +904,7 @@ async function submitService() {
         return;
     }
 
-    state.masters.unshift({
+    const master = {
         id: `m_${Date.now()}`,
         name: state.session.name || 'Вы',
         category,
@@ -821,10 +919,14 @@ async function submitService() {
         district: (dom.inputs.serviceDistrict && dom.inputs.serviceDistrict.value.trim()) || state.location.district || '',
         lat: state.location.lat,
         lon: state.location.lon,
-        status: 'active'
-    });
+        status: 'active',
+        createdAt: Date.now()
+    };
+
+    state.masters.unshift(master);
 
     persistMasters();
+    cloudUpsert('masters', master);
 
     dom.forms['add-service'].reset();
     state.activeFeed = 'masters';
@@ -984,6 +1086,7 @@ function handleMyClick(e) {
         if (!order) return;
         order.status = 'Ожидает подтверждения';
         persistOrders();
+        cloudUpsert('orders', order);
         renderMy();
         renderFeeds();
         return;
@@ -1008,6 +1111,7 @@ function handleMyClick(e) {
         const idx = state.masters.findIndex((m) => m.id === id && (state.session.isAdmin || m.phone === getUserKey()));
         if (idx >= 0) state.masters.splice(idx, 1);
         persistMasters();
+        cloudDelete('masters', id);
         renderMy();
         renderFeeds();
     }
@@ -1065,11 +1169,13 @@ function submitRating() {
         const next = (old * count + stars) / (count + 1);
         m.rating = Math.round(next * 10) / 10;
         m.ratingCount = count + 1;
+        cloudUpsert('masters', m);
     });
 
     order.status = 'Завершен';
     persistMasters();
     persistOrders();
+    cloudUpsert('orders', order);
     closeRatingModal();
     renderFeeds();
     renderMy();
@@ -1541,8 +1647,11 @@ dom.feeds.orders.addEventListener('click', handleFeedClick);
 // 8) INIT
 // ==========================================
 
+initCloud();
 renderProfile();
 applyRoleUI();
 renderLocationUI();
 renderFeeds();
 setActiveScreen('home');
+
+startCloudSubscriptions();
