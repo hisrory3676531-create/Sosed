@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Наш Мастер | Красноярск</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .line-clamp-2 {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .tab-active { background-color: #2563eb; color: white; }
+        .tab-inactive { background-color: #f3f4f6; color: #4b5563; }
+        .role-active { background-color: white; color: #2563eb; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .role-inactive { color: #6b7280; }
+    </style>
+</head>
+<body class="pb-24">
+
+    <div class="w-full bg-gray-50 min-h-screen relative">
+        <div class="w-full max-w-7xl mx-auto">
+            <header class="bg-white px-4 py-3 shadow-sm sticky top-0 z-40">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <h1 class="text-xl font-bold text-blue-600">Наш Мастер</h1>
+                        <p id="header-location" class="text-[10px] text-gray-500"><i class="fa-solid fa-location-dot"></i> Красноярск, 2026</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button id="btn-detect-location" type="button" class="bg-blue-50 p-2 rounded-full text-blue-600" aria-label="Определить местоположение">
+                            <i class="fa-solid fa-location-crosshairs"></i>
+                        </button>
+                        <button type="button" class="bg-blue-50 p-2 rounded-full text-blue-600" aria-label="Уведомления">
+                            <i class="fa-solid fa-bell"></i>
+                        </button>
+                    </div>
+                </div>
+            </header>
+        </div>
+
+        <main id="screen-home" class="block">
+            <div class="w-full max-w-7xl mx-auto">
+                <div class="p-4 bg-white border-b flex space-x-2">
+                    <button id="tab-masters" type="button" class="flex-1 py-2 rounded-xl text-sm font-bold tab-active">Мастера</button>
+                    <button id="tab-orders" type="button" class="flex-1 py-2 rounded-xl text-sm font-bold tab-inactive">Заказы соседей</button>
+                </div>
+                <div class="px-4 pb-3 bg-white border-b">
+                    <div id="category-chips" class="flex gap-2 overflow-x-auto no-scrollbar">
+                        <button type="button" class="chip-btn tab-active px-3 py-2 rounded-full text-xs font-bold whitespace-nowrap" data-chip="all">Все</button>
+                        <button type="button" class="chip-btn tab-inactive px-3 py-2 rounded-full text-xs font-bold whitespace-nowrap" data-chip="moroz">❄️ Мороз</button>
+                        <button type="button" class="chip-btn tab-inactive px-3 py-2 rounded-full text-xs font-bold whitespace-nowrap" data-chip="electro">⚡ Электрика</button>
+                        <button type="button" class="chip-btn tab-inactive px-3 py-2 rounded-full text-xs font-bold whitespace-nowrap" data-chip="water">💧 Сантехника</button>
+                        <button type="button" class="chip-btn tab-inactive px-3 py-2 rounded-full text-xs font-bold whitespace-nowrap" data-chip="build">🛠 Сборка</button>
+                        <button type="button" class="chip-btn tab-inactive px-3 py-2 rounded-full text-xs font-bold whitespace-nowrap" data-chip="loader">📦 Грузчик</button>
+                        <button type="button" class="chip-btn tab-inactive px-3 py-2 rounded-full text-xs font-bold whitespace-nowrap" data-chip="nanny">👼 Няня</button>
+                        <button type="button" class="chip-btn tab-inactive px-3 py-2 rounded-full text-xs font-bold whitespace-nowrap" data-chip="pets">🐕 Питомцы</button>
+                        <button type="button" class="chip-btn tab-inactive px-3 py-2 rounded-full text-xs font-bold whitespace-nowrap" data-chip="it">🖥 IT</button>
+                    </div>
+                </div>
+                <div id="feed-masters" class="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"></div>
+                <div id="feed-orders" class="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 hidden"></div>
+            </div>
+        </main>
+
+        <main id="screen-create-order" class="hidden">
+            <div class="p-4 pb-32 max-w-xl mx-auto">
+                <h2 class="text-2xl font-bold mb-6">Что нужно сделать?</h2>
+                <form id="form-create-order" class="space-y-4">
+                    <input id="new-order-title" type="text" placeholder="Пример: Починить кран" class="w-full bg-white border p-4 rounded-2xl">
+                    <select id="new-order-cat" class="w-full bg-white border p-4 rounded-2xl">
+                        <optgroup label="Муж на час">
+                            <option value="Сантехника">Сантехника</option>
+                            <option value="Электрика">Электрика</option>
+                            <option value="Слесарь">Слесарь</option>
+                            <option value="Сборка мебели">Сборка мебели</option>
+                            <option value="Установщик">Установщик</option>
+                        </optgroup>
+                        <optgroup label="Сибирская помощь">
+                            <option value="Запуск авто в мороз">Запуск авто в мороз</option>
+                            <option value="Помощь в мороз">Помощь в мороз</option>
+                            <option value="Отогрев">Отогрев</option>
+                        </optgroup>
+                        <optgroup label="Быт">
+                            <option value="Уборка">Уборка</option>
+                            <option value="Поход в магазин">Поход в магазин</option>
+                            <option value="Выгул собак">Выгул собак</option>
+                            <option value="Маникюр">Маникюр</option>
+                            <option value="Няня">Няня</option>
+                        </optgroup>
+                        <optgroup label="Прочее">
+                            <option value="Грузчик">Грузчик</option>
+                            <option value="IT-помощь">IT-помощь</option>
+                            <option value="Аренда инструмента">Аренда инструмента</option>
+                        </optgroup>
+                    </select>
+                    <input id="new-order-price" type="number" inputmode="numeric" placeholder="Цена ₽" class="w-full bg-white border p-4 rounded-2xl">
+                    <input id="new-order-address" type="text" placeholder="Адрес (ЖК/Улица)" class="w-full bg-white border p-4 rounded-2xl">
+                    <div class="grid grid-cols-2 gap-3">
+                        <input id="new-order-city" type="text" placeholder="Город" readonly class="w-full bg-gray-100 border p-4 rounded-2xl">
+                        <input id="new-order-district" type="text" placeholder="Район" class="w-full bg-white border p-4 rounded-2xl">
+                    </div>
+                    <button type="submit" class="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold">Опубликовать</button>
+                </form>
+            </div>
+        </main>
+
+        <main id="screen-add-service" class="hidden">
+            <div class="p-4 pb-32 max-w-xl mx-auto">
+                <h2 class="text-2xl font-bold mb-6">Добавить услугу</h2>
+                <form id="form-add-service" class="space-y-4">
+                    <select id="new-service-cat" class="w-full bg-white border p-4 rounded-2xl">
+                        <optgroup label="Муж на час">
+                            <option value="Сантехника">Сантехника</option>
+                            <option value="Электрика">Электрика</option>
+                            <option value="Слесарь">Слесарь</option>
+                            <option value="Сборка мебели">Сборка мебели</option>
+                            <option value="Установщик">Установщик</option>
+                        </optgroup>
+                        <optgroup label="Сибирская помощь">
+                            <option value="Запуск авто в мороз">Запуск авто в мороз</option>
+                            <option value="Помощь в мороз">Помощь в мороз</option>
+                            <option value="Отогрев">Отогрев</option>
+                        </optgroup>
+                        <optgroup label="Быт">
+                            <option value="Уборка">Уборка</option>
+                            <option value="Поход в магазин">Поход в магазин</option>
+                            <option value="Выгул собак">Выгул собак</option>
+                            <option value="Маникюр">Маникюр</option>
+                            <option value="Няня">Няня</option>
+                        </optgroup>
+                        <optgroup label="Прочее">
+                            <option value="Грузчик">Грузчик</option>
+                            <option value="IT-помощь">IT-помощь</option>
+                            <option value="Аренда инструмента">Аренда инструмента</option>
+                        </optgroup>
+                    </select>
+                    <textarea id="new-service-desc" rows="3" placeholder="Описание навыков" class="w-full bg-white border p-4 rounded-2xl"></textarea>
+                    <input id="new-service-price" type="number" inputmode="numeric" placeholder="Цена от ₽" class="w-full bg-white border p-4 rounded-2xl">
+                    <input id="new-service-address" type="text" placeholder="Район работы" class="w-full bg-white border p-4 rounded-2xl">
+                    <div class="grid grid-cols-2 gap-3">
+                        <input id="new-service-city" type="text" placeholder="Город" readonly class="w-full bg-gray-100 border p-4 rounded-2xl">
+                        <input id="new-service-district" type="text" placeholder="Район" class="w-full bg-white border p-4 rounded-2xl">
+                    </div>
+                    <button type="submit" class="w-full bg-green-600 text-white py-4 rounded-2xl font-bold">Сохранить услугу</button>
+                </form>
+            </div>
+        </main>
+
+        <main id="screen-my" class="hidden">
+            <div class="w-full max-w-7xl mx-auto p-4 pb-32">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-2xl font-bold">Мои</h2>
+                    <span id="my-role-badge" class="text-xs font-bold bg-blue-50 text-blue-600 px-3 py-1 rounded-full">Клиент</span>
+                </div>
+                <div id="my-content" class="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"></div>
+            </div>
+        </main>
+
+        <main id="screen-profile" class="hidden">
+            <div class="p-4 max-w-md mx-auto text-center">
+                <div class="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+                    <div class="w-20 h-20 bg-gray-200 rounded-full mx-auto mb-4 flex items-center justify-center overflow-hidden">
+                        <img id="profile-avatar" src="https://i.pravatar.cc/150?img=33" class="w-full h-full object-cover" alt="Аватар">
+                    </div>
+                    <h2 id="profile-name" class="text-xl font-bold">Гость</h2>
+                    <p id="profile-phone" class="text-sm text-gray-500 mt-1">Телефон не указан</p>
+                    <p id="profile-sub-status" class="text-sm text-gray-500 mt-1">Подписка неактивна</p>
+                    <p id="profile-subtitle" class="text-sm text-gray-500 mt-1">Войдите, чтобы публиковать заказы и услуги</p>
+
+                    <div class="mt-5 bg-gray-50 rounded-2xl p-4 text-left">
+                        <div class="text-xs font-bold text-gray-500 uppercase tracking-wider">Настройки профиля</div>
+                        <div class="grid grid-cols-1 gap-3 mt-3">
+                            <input id="profile-edit-name" type="text" placeholder="Ваше имя" class="w-full bg-white border p-3 rounded-2xl text-sm">
+                            <input id="profile-edit-phone" type="tel" placeholder="Телефон +7..." class="w-full bg-white border p-3 rounded-2xl text-sm">
+                            <input id="profile-avatar-file" type="file" accept="image/*" class="hidden">
+                            <div class="grid grid-cols-2 gap-3">
+                                <button id="btn-profile-change-avatar" type="button" class="bg-white border py-3 rounded-2xl font-bold text-sm">
+                                    Сменить аватар
+                                </button>
+                                <button id="btn-profile-save" type="button" class="bg-blue-600 text-white py-3 rounded-2xl font-bold text-sm">
+                                    Сохранить
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button id="btn-profile-detect-location" type="button" class="w-full mt-5 bg-gray-100 text-blue-600 py-3 rounded-2xl font-bold">
+                        <i class="fa-solid fa-location-crosshairs"></i>
+                        Определить местоположение
+                    </button>
+
+                    <div class="grid grid-cols-2 gap-3 mt-3">
+                        <input id="profile-city" type="text" placeholder="Город" readonly class="w-full bg-gray-100 border p-3 rounded-2xl text-sm">
+                        <input id="profile-district" type="text" placeholder="Район" class="w-full bg-white border p-3 rounded-2xl text-sm">
+                    </div>
+
+                    <div class="bg-gray-100 p-1 rounded-xl flex my-6">
+                        <button id="btn-role-client" type="button" class="flex-1 py-2 rounded-lg font-bold text-sm role-active">Я клиент</button>
+                        <button id="btn-role-master" type="button" class="flex-1 py-2 rounded-lg font-bold text-sm role-inactive">Я мастер</button>
+                    </div>
+                    <button id="btn-subscribe" type="button" class="w-full bg-green-600 text-white py-3 rounded-2xl font-bold">Оформить подписку</button>
+                    <button id="btn-logout" type="button" class="w-full text-red-500 font-bold bg-red-50 py-3 rounded-2xl">Выйти</button>
+                </div>
+            </div>
+        </main>
+
+        <div id="contact-modal" class="fixed inset-0 bg-black/60 z-[100] hidden items-center justify-center p-4">
+            <div class="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl">
+                <h3 class="text-xl font-bold mb-1">Связаться с соседом</h3>
+                <p id="contact-info" class="text-sm text-gray-500 mb-6"></p>
+
+                <div id="contact-phone-hidden" class="bg-gray-50 border rounded-2xl p-4">
+                    <div class="text-xs font-bold text-gray-500 uppercase tracking-wider">Телефон</div>
+                    <div class="mt-2 text-lg font-bold text-gray-900">+7 (***) ***-**-**</div>
+                    <button id="btn-contact-show-phone" type="button" class="w-full mt-3 bg-blue-600 text-white py-3 rounded-2xl font-bold">Показать номер</button>
+                </div>
+
+                <div id="contact-phone-shown" class="hidden bg-gray-50 border rounded-2xl p-4">
+                    <div class="text-xs font-bold text-gray-500 uppercase tracking-wider">Телефон</div>
+                    <div id="contact-phone" class="mt-2 text-lg font-bold text-gray-900"></div>
+                    <button id="btn-contact-copy-phone" type="button" class="w-full mt-3 bg-white border py-3 rounded-2xl font-bold">Скопировать номер</button>
+                </div>
+                <button id="btn-contact-close" type="button" class="w-full mt-4 py-3 text-gray-400 font-semibold">Закрыть</button>
+            </div>
+        </div>
+
+        <div id="dialog-modal" class="fixed inset-0 bg-black/60 z-[110] hidden items-center justify-center p-4">
+            <div class="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl">
+                <h3 id="dialog-title" class="text-xl font-bold mb-1"></h3>
+                <p id="dialog-text" class="text-sm text-gray-500 mb-4"></p>
+                <input id="dialog-input" type="text" class="hidden w-full bg-white border p-3 rounded-2xl text-sm" />
+                <div class="grid grid-cols-2 gap-3 mt-4">
+                    <button id="btn-dialog-cancel" type="button" class="bg-white border py-3 rounded-2xl font-bold text-sm">Отмена</button>
+                    <button id="btn-dialog-ok" type="button" class="bg-blue-600 text-white py-3 rounded-2xl font-bold text-sm">OK</button>
+                </div>
+            </div>
+        </div>
+
+        <nav class="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around items-center py-2 z-40 pb-4">
+            <button id="nav-home" type="button" class="nav-btn flex flex-col items-center text-blue-600 w-16" data-target="home">
+                <i class="fa-solid fa-house text-xl"></i><span class="text-[10px] mt-1">Лента</span>
+            </button>
+            <button id="nav-my" type="button" class="nav-btn flex flex-col items-center text-gray-400 w-16" data-target="my"><i class="fa-solid fa-clipboard-list text-xl"></i><span class="text-[10px] mt-1">Мои</span></button>
+            <button id="main-plus-btn" type="button" class="bg-blue-600 text-white w-14 h-14 rounded-full flex items-center justify-center -mt-8 border-4 border-gray-50 shadow-lg">
+                <i class="fa-solid fa-plus text-2xl"></i>
+            </button>
+            <button type="button" class="flex flex-col items-center text-gray-400 w-16"><i class="fa-solid fa-message text-xl"></i><span class="text-[10px] mt-1">Чаты</span></button>
+            <button id="nav-profile" type="button" class="nav-btn flex flex-col items-center text-gray-400 w-16" data-target="profile">
+                <i class="fa-solid fa-user text-xl"></i><span class="text-[10px] mt-1">Профиль</span>
+            </button>
+        </nav>
+
+        <div id="auth-modal" class="fixed inset-0 bg-black/60 z-[100] hidden flex-col justify-end">
+    <div class="bg-white w-full max-w-md mx-auto rounded-t-3xl p-6 shadow-2xl pb-10">
+        
+        <div id="auth-step-1">
+            <h2 class="text-2xl font-bold mb-1">Вход</h2>
+            <p class="text-red-600 text-[11px] font-bold mb-4 uppercase tracking-wider">
+                Данный способ входа временно не работает
+            </p>
+            
+            <input id="user-phone" type="tel" placeholder="+7..." value="+7" 
+                   class="w-full bg-gray-100 rounded-2xl py-4 px-6 mb-4 text-xl font-bold border-2 border-transparent focus:border-red-200">
+            
+            <button id="btn-auth-next" type="button" class="w-full bg-blue-600 text-white py-4 rounded-2xl font-bold">
+                Получить код
+            </button>
+
+            <div class="relative my-6">
+                <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-gray-200"></div></div>
+                <div class="relative flex justify-center text-sm"><span class="px-2 bg-white text-gray-400">или через</span></div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <button id="btn-auth-vk" type="button" class="flex items-center justify-center gap-2 bg-[#0077FF] text-white py-3 rounded-2xl font-bold transition active:scale-95">
+                    <i class="fa-brands fa-vk text-lg"></i> VK ID
+                </button>
+                <button id="btn-auth-max" type="button" class="flex items-center justify-center gap-2 bg-[#8B5CF6] text-white py-3 rounded-2xl font-bold transition active:scale-95">
+                    <i class="fa-solid fa-m text-lg"></i> MAX
+                </button>
+            </div>
+            
+            <button id="btn-auth-cancel" type="button" class="w-full mt-3 text-gray-400 py-2">Отмена</button>
+        </div>
+
+        <div id="auth-step-2" class="hidden">
+            <h2 class="text-2xl font-bold mb-2">Код из СМС</h2>
+            <p id="auth-step-2-text" class="text-gray-500 mb-6 text-sm">Код отправлен</p>
+            <input id="sms-code" type="text" inputmode="numeric" placeholder="1111" maxlength="4" 
+                   class="w-full bg-gray-100 rounded-2xl py-4 px-6 mb-4 text-center text-2xl font-bold tracking-[0.3em]">
+            <button id="btn-auth-login" type="button" class="w-full bg-green-600 text-white py-4 rounded-2xl font-bold">Войти</button>
+            <button id="btn-auth-back" type="button" class="w-full mt-3 text-gray-400 py-2">Изменить номер</button>
+        </div>
+
+    </div>
+</div>
+
+        <div id="rating-modal" class="fixed inset-0 bg-black/60 z-[110] hidden items-center justify-center p-4">
+            <div class="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl">
+                <h3 class="text-xl font-bold">Оцените соседа</h3>
+                <p id="rating-title" class="text-sm text-gray-500 mt-1"></p>
+
+                <div id="rating-stars" class="flex gap-2 mt-5">
+                    <button type="button" class="rating-star text-2xl text-yellow-500" data-star="1"><i class="fa-regular fa-star"></i></button>
+                    <button type="button" class="rating-star text-2xl text-yellow-500" data-star="2"><i class="fa-regular fa-star"></i></button>
+                    <button type="button" class="rating-star text-2xl text-yellow-500" data-star="3"><i class="fa-regular fa-star"></i></button>
+                    <button type="button" class="rating-star text-2xl text-yellow-500" data-star="4"><i class="fa-regular fa-star"></i></button>
+                    <button type="button" class="rating-star text-2xl text-yellow-500" data-star="5"><i class="fa-regular fa-star"></i></button>
+                </div>
+
+                <textarea id="rating-text" rows="3" class="w-full mt-4 bg-gray-100 rounded-2xl p-4" placeholder="Короткий отзыв (необязательно)"></textarea>
+
+                <div class="grid grid-cols-2 gap-3 mt-5">
+                    <button id="btn-rating-cancel" type="button" class="bg-gray-100 text-gray-700 py-3 rounded-2xl font-bold">Отмена</button>
+                    <button id="btn-rating-submit" type="button" class="bg-blue-600 text-white py-3 rounded-2xl font-bold">Отправить</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
