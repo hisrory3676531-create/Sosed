@@ -1271,9 +1271,9 @@ function renderMy() {
         const myDeals = (state.serviceDeals || []).filter((d) => myPhone && normalizePhone(d.clientPhone) === myPhone);
 
         blocks.push(...myOrders.map((o) => {
-            const st = String(o.status || 'Активен');
+            const st = String(o.status || 'Активен').trim();
             const canCancel = st === 'Выполняется';
-            const canConfirm = st === 'Ожидает подтверждения';
+            const canConfirm = st.startsWith('Ожидает подтверждения');
             const canDelete = st === 'Активен';
             return `
                 <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
@@ -1290,8 +1290,8 @@ function renderMy() {
         }));
 
         blocks.push(...myDeals.map((d) => {
-            const st = String(d.status || '');
-            const canConfirm = st === 'Ожидает подтверждения клиента';
+            const st = String(d.status || '').trim();
+            const canConfirm = st.startsWith('Ожидает подтверждения');
             const canCancel = st === 'Ожидает мастера';
             const canDelete = st === 'Отказан' || st === 'Отменен' || st === 'Завершен';
             return `
@@ -1312,7 +1312,7 @@ function renderMy() {
         const incomingDeals = (state.serviceDeals || []).filter((d) => myPhone && normalizePhone(d.masterPhone) === myPhone);
 
         blocks.push(...myOrders.map((o) => {
-            const st = String(o.status || '');
+            const st = String(o.status || '').trim();
             const canFinish = st === 'Выполняется';
             const canCancel = st === 'Выполняется';
             return `
@@ -1328,7 +1328,7 @@ function renderMy() {
         }));
 
         blocks.push(...incomingDeals.map((d) => {
-            const st = String(d.status || '');
+            const st = String(d.status || '').trim();
             const canAccept = st === 'Ожидает мастера';
             const canDecline = st === 'Ожидает мастера';
             const canFinish = st === 'Выполняется';
