@@ -19,7 +19,8 @@ const STORAGE_KEYS = {
     masters: 'masters',
     orders: 'orders',
     masterResponses: 'masterResponses',
-    notificationsUnread: 'notificationsUnread'
+    notificationsUnread: 'notificationsUnread',
+    notifications: 'notifications'
 };
 
 const state = {
@@ -34,6 +35,13 @@ const state = {
         subUntil: Number(localStorage.getItem(STORAGE_KEYS.userSubUntil)) || null
     },
     notificationsUnread: Number(localStorage.getItem(STORAGE_KEYS.notificationsUnread)) || 0,
+    notifications: (() => {
+        try {
+            return JSON.parse(localStorage.getItem(STORAGE_KEYS.notifications) || '[]');
+        } catch {
+            return [];
+        }
+    })(),
     userRole: localStorage.getItem(STORAGE_KEYS.userRole) || 'client',
     adminPhone: '+79509822033',
     adminCode: '1218',
@@ -221,15 +229,33 @@ function startCloudSubscriptions() {
 
                     if (isMyClientOrder) {
                         if (nextStatus === 'Выполняется') {
-                            pushNotification();
+                            pushNotification({
+                                ts: Date.now(),
+                                kind: 'order_accepted',
+                                orderId: String(o.id),
+                                title: String(o.title || ''),
+                                text: `Ваш заказ принят: ${String(o.title || '')}`
+                            });
                         } else if (nextStatus === 'Активен') {
-                            pushNotification();
+                            pushNotification({
+                                ts: Date.now(),
+                                kind: 'order_back_to_feed',
+                                orderId: String(o.id),
+                                title: String(o.title || ''),
+                                text: `Заказ снова в ленте: ${String(o.title || '')}`
+                            });
                         }
                     }
 
                     if (isMyAssigned) {
                         if (nextStatus === 'Активен') {
-                            pushNotification();
+                            pushNotification({
+                                ts: Date.now(),
+                                kind: 'order_canceled',
+                                orderId: String(o.id),
+                                title: String(o.title || ''),
+                                text: `Заказ возвращён в ленту: ${String(o.title || '')}`
+                            });
                         }
                     }
                 }
@@ -667,6 +693,10 @@ function persistNotificationsUnread() {
     localStorage.setItem(STORAGE_KEYS.notificationsUnread, String(Number(state.notificationsUnread) || 0));
 }
 
+function persistNotifications() {
+    localStorage.setItem(STORAGE_KEYS.notifications, JSON.stringify(state.notifications || []));
+}
+
 function renderNotificationsBadge() {
     const n = Number(state.notificationsUnread) || 0;
     if (!dom || !dom.header || !dom.header.notifBadge) return;
@@ -703,14 +733,21 @@ function playBellSound() {
     }
 }
 
-function pushNotification() {
+function pushNotification(payload) {
     state.notificationsUnread = (Number(state.notificationsUnread) || 0) + 1;
+    if (payload) {
+        state.notifications = (state.notifications || []).concat(payload);
+        persistNotifications();
+    }
     persistNotificationsUnread();
     renderNotificationsBadge();
     playBellSound();
 }
 
 function clearNotifications() {
+    state.notificationsUnread = 0;
+    state.notifications = [];
+    persistNotifications();
     persistNotificationsUnread();
     renderNotificationsBadge();
 }
@@ -2118,11 +2155,18 @@ if (dom.profile.detectLocation) dom.profile.detectLocation.addEventListener('cli
 // --- Уведомления (колокольчик) ---
 if (dom.header.notifications) {
     dom.header.notifications.addEventListener('click', async () => {
+        const items = Array.isArray(state.notifications) ? state.notifications.slice().reverse() : [];
+        const text = items.length
+            ? items.map((n) => String(n && n.text ? n.text : '')).filter(Boolean).join('\n')
+            : 'Новых уведомлений нет.';
+
+        await openConfirm({ title: 'Уведомления', text, okText: 'OK', cancelText: 'Закрыть' });
+
+        // После просмотра — очищаем счётчик непрочитанных (историю оставляем)
         if ((Number(state.notificationsUnread) || 0) > 0) {
-            clearNotifications();
-            await openConfirm({ title: 'Уведомления', text: 'Уведомления прочитаны.', okText: 'OK', cancelText: 'Закрыть' });
-        } else {
-            await openConfirm({ title: 'Уведомления', text: 'Новых уведомлений нет.', okText: 'OK', cancelText: 'Закрыть' });
+            state.notificationsUnread = 0;
+            persistNotificationsUnread();
+            renderNotificationsBadge();
         }
     });
 }
