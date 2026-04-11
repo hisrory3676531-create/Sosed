@@ -113,6 +113,16 @@
             </div>
         </main>
 
+        <main id="screen-notifications" class="hidden">
+            <div class="p-4 pb-32 max-w-xl mx-auto">
+                <div class="flex items-center justify-between gap-3">
+                    <h2 class="text-2xl font-bold">Уведомления</h2>
+                    <button id="btn-notifications-clear" type="button" class="bg-gray-100 text-gray-700 px-4 py-2 rounded-2xl font-bold text-sm">Очистить</button>
+                </div>
+                <div id="notifications-list" class="mt-4 space-y-3"></div>
+            </div>
+        </main>
+
         <main id="screen-add-service" class="hidden">
             <div class="p-4 pb-32 max-w-xl mx-auto">
                 <h2 class="text-2xl font-bold mb-6">Добавить услугу</h2>
@@ -253,7 +263,7 @@
             <button id="main-plus-btn" type="button" class="bg-blue-600 text-white w-14 h-14 rounded-full flex items-center justify-center -mt-8 border-4 border-gray-50 shadow-lg">
                 <i class="fa-solid fa-plus text-2xl"></i>
             </button>
-            <button type="button" class="flex flex-col items-center text-gray-400 w-16"><i class="fa-solid fa-message text-xl"></i><span class="text-[10px] mt-1">Чаты</span></button>
+            <button id="nav-notifications" type="button" class="nav-btn flex flex-col items-center text-gray-400 w-16" data-target="notifications"><i class="fa-solid fa-bell text-xl"></i><span class="text-[10px] mt-1">Увед.</span></button>
             <button id="nav-profile" type="button" class="nav-btn flex flex-col items-center text-gray-400 w-16" data-target="profile">
                 <i class="fa-solid fa-user text-xl"></i><span class="text-[10px] mt-1">Профиль</span>
             </button>
