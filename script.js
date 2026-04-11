@@ -929,10 +929,16 @@ function isValidPhone(phone) {
 }
 
 function normalizePhone(phone) {
-    const value = String(phone || '').trim();
-    if (!value) return '';
-    if (value.startsWith('+')) return value;
-    return value;
+    const digits = String(phone || '').replace(/\D/g, '');
+    if (!digits) return '';
+
+    // РФ-номера: приводим к +7XXXXXXXXXX
+    if (digits.length === 11 && digits.startsWith('8')) return `+7${digits.slice(1)}`;
+    if (digits.length === 11 && digits.startsWith('7')) return `+${digits}`;
+    if (digits.length === 10) return `+7${digits}`;
+
+    // Иные форматы оставляем как "+" + digits, чтобы сравнения были стабильными
+    return digits.startsWith('0') ? digits : `+${digits}`;
 }
 
 function isLoggedIn() {
@@ -1408,6 +1414,51 @@ async function handleFeedClick(e) {
         const accepted = await acceptOrder(order.id);
         if (!accepted) return;
     }
+
+    if (kind === 'master') {
+        if (state.userRole !== 'client') {
+            alert('Откликаться на услуги может только клиент (переключите роль в профиле).');
+            return;
+        }
+        if (!await requireSubscription('Отклик на услугу мастера')) return;
+        if (!requireAuth('contact')) return;
+        if (!await ensureUserPhone()) return;
+
+        const masterId = String(btn.dataset.id || '');
+        const master = state.masters.find((m) => String(m.id) === masterId);
+        if (!master) {
+            alert('Услуга не найдена');
+            return;
+        }
+
+        const clientPhone = String(state.session.phone || '').trim();
+        const masterPhone = String(master.phone || '').trim();
+        if (!clientPhone || !masterPhone) return;
+
+        if (normalizePhone(clientPhone) === normalizePhone(masterPhone)) {
+            alert('Нельзя откликнуться на свою услугу');
+            return;
+        }
+
+        const deal = {
+            id: `d_${Date.now()}`,
+            serviceId: String(master.id),
+            serviceTitle: String(master.category || 'Услуга'),
+            serviceDesc: String(master.desc || ''),
+            priceFrom: Number(master.priceFrom) || 0,
+            masterPhone: normalizePhone(masterPhone),
+            masterName: String(master.name || ''),
+            clientPhone: normalizePhone(clientPhone),
+            clientName: String(state.session.name || ''),
+            status: 'Ожидает мастера',
+            createdAt: Date.now()
+        };
+
+        state.serviceDeals = Array.isArray(state.serviceDeals) ? state.serviceDeals : [];
+        state.serviceDeals.unshift(deal);
+        persistServiceDeals();
+        cloudUpsert('serviceDeals', deal);
+    }
     await openContactModal(btn.dataset.phone, btn.dataset.title, kind);
 }
 
@@ -1626,7 +1677,8 @@ function getMyOrdersAsClient() {
 }
 
 function getMyServicesAsMaster() {
-    return state.masters.filter((m) => m.phone === getUserKey());
+    const my = normalizePhone(getUserKey());
+    return state.masters.filter((m) => normalizePhone(m.phone) === my);
 }
 
 function getMyRespondedOrdersAsMaster() {
@@ -1710,14 +1762,14 @@ function renderMy() {
 
         const dealsBlock = myServiceDeals.length ? myServiceDeals.map((d) => {
             const st = String(d.status || '');
-            const canCancel = st === 'Ожидает мастера' || st === 'Выполняется';
             const canConfirm = st === 'Ожидает подтверждения клиента';
+            const canCancel = st === 'Ожидает мастера' || st === 'Выполняется';
             const canDelete = st === 'Отказан' || st === 'Отменен' || st === 'Завершен';
             return `
                 <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
                     <div class="flex justify-between items-start gap-3">
                         <div>
-                            <div class="text-xs text-gray-500 font-semibold">Услуга мастера</div>
+                            <div class="text-xs text-gray-500 font-semibold">Отклик на мастера: ${escapeHtml(d.masterName || 'Мастер')}</div>
                             <h3 class="font-bold text-gray-900 mt-1">${escapeHtml(d.serviceTitle || '')}</h3>
                         </div>
                         <div class="text-right">
@@ -1810,7 +1862,7 @@ function renderMy() {
             <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
                 <div class="flex justify-between items-start gap-3">
                     <div>
-                        <div class="text-xs text-gray-500 font-semibold">${escapeHtml(d.clientName || 'Клиент')}</div>
+                        <div class="text-xs text-gray-500 font-semibold">Клиент: ${escapeHtml(d.clientName || 'Клиент')}</div>
                         <h3 class="font-bold text-gray-900 mt-1">${escapeHtml(d.serviceTitle || '')}</h3>
                     </div>
                     <div class="text-right">
@@ -1818,6 +1870,7 @@ function renderMy() {
                         ${d.priceFrom ? `<div class="mt-2 font-bold text-green-600">от ${formatPrice(d.priceFrom)} ₽</div>` : ''}
                     </div>
                 </div>
+                ${st === 'Выполняется' ? `<div class="mt-3 text-xs text-gray-500 font-semibold">Сейчас выполняете работу для клиента</div>` : ''}
                 ${canAccept ? `<button type="button" data-action="service-deal-accept" data-id="${escapeHtml(d.id)}" class="w-full mt-4 bg-green-600 text-white py-3 rounded-2xl font-bold">Принять</button>` : ''}
                 ${canDecline ? `<button type="button" data-action="service-deal-decline" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Отказать</button>` : ''}
                 ${canFinish ? `<button type="button" data-action="service-deal-finish" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-blue-600 text-white py-3 rounded-2xl font-bold">Работа завершена</button>` : ''}
