@@ -3,8 +3,8 @@
 // ==========================================
 
 const STORAGE_KEYS = {
-    userPhone: 'userPhone',
     userId: 'userId',
+    userPhone: 'userPhone',
     userName: 'userName',
     userAvatar: 'userAvatar',
     userProvider: 'userProvider',
@@ -19,6 +19,7 @@ const STORAGE_KEYS = {
     masters: 'masters',
     orders: 'orders',
     masterResponses: 'masterResponses',
+    serviceDeals: 'serviceDeals',
     notificationsUnread: 'notificationsUnread',
     notifications: 'notifications'
 };
@@ -81,6 +82,13 @@ const state = {
         } catch {
             return [];
         }
+    })(),
+    serviceDeals: (() => {
+        try {
+            return JSON.parse(localStorage.getItem(STORAGE_KEYS.serviceDeals) || '[]');
+        } catch {
+            return [];
+        }
     })()
 };
 
@@ -102,7 +110,8 @@ let cloud = {
     enabled: false,
     db: null,
     unsubOrders: null,
-    unsubMasters: null
+    unsubMasters: null,
+    unsubServiceDeals: null
 };
 
 function ensureFirebaseSdkLoaded() {
@@ -200,6 +209,7 @@ function startCloudSubscriptions() {
 
     if (typeof cloud.unsubOrders === 'function') cloud.unsubOrders();
     if (typeof cloud.unsubMasters === 'function') cloud.unsubMasters();
+    if (typeof cloud.unsubServiceDeals === 'function') cloud.unsubServiceDeals();
 
     cloud.unsubOrders = cloud.db
         .collection('orders')
@@ -208,12 +218,12 @@ function startCloudSubscriptions() {
                 .map((d) => ({ id: d.id, ...d.data() }))
                 .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
 
-            // Уведомления по смене статуса для текущего пользователя (если он залогинен)
             try {
                 const prevById = uiState.ordersById || {};
                 const nextById = {};
 
                 const myPhone = state.session && state.session.phone ? normalizePhone(state.session.phone) : null;
+
                 for (const o of next) {
                     nextById[String(o.id)] = o;
                     if (!myPhone) continue;
@@ -306,6 +316,130 @@ function startCloudSubscriptions() {
             if (dom.screens && dom.screens.my && !dom.screens.my.classList.contains('hidden')) renderMy();
         }, (err) => {
             console.error('masters snapshot error', err);
+        });
+
+    cloud.unsubServiceDeals = cloud.db
+        .collection('serviceDeals')
+        .onSnapshot((snap) => {
+            const next = snap.docs
+                .map((d) => ({ id: d.id, ...d.data() }))
+                .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+
+            try {
+                const prevById = uiState.serviceDealsById || {};
+                const nextById = {};
+                const myPhone = state.session && state.session.phone ? normalizePhone(state.session.phone) : null;
+
+                for (const deal of next) {
+                    nextById[String(deal.id)] = deal;
+                    if (!myPhone) continue;
+
+                    const prev = prevById[String(deal.id)];
+                    const isMyAsClient = normalizePhone(deal.clientPhone) === myPhone;
+                    const isMyAsMaster = normalizePhone(deal.masterPhone) === myPhone;
+
+                    if (!prev) {
+                        const st = String(deal.status || '');
+                        if (isMyAsMaster && st === 'Ожидает мастера') {
+                            pushNotification({
+                                ts: Date.now(),
+                                kind: 'service_deal_new',
+                                orderId: String(deal.id),
+                                title: String(deal.serviceTitle || ''),
+                                text: `✅ Новый отклик на вашу услугу: ${String(deal.serviceTitle || '')}`
+                            });
+                        }
+                        if (isMyAsClient && st === 'Ожидает мастера') {
+                            pushNotification({
+                                ts: Date.now(),
+                                kind: 'service_deal_created',
+                                orderId: String(deal.id),
+                                title: String(deal.serviceTitle || ''),
+                                text: `✅ Заявка отправлена мастеру: ${String(deal.serviceTitle || '')}`
+                            });
+                        }
+                        continue;
+                    }
+
+                    const prevStatus = String(prev.status || '');
+                    const nextStatus = String(deal.status || '');
+                    if (prevStatus === nextStatus) continue;
+
+                    if (isMyAsClient) {
+                        if (nextStatus === 'Выполняется') {
+                            pushNotification({
+                                ts: Date.now(),
+                                kind: 'service_deal_accepted',
+                                orderId: String(deal.id),
+                                title: String(deal.serviceTitle || ''),
+                                text: `✅ Мастер принял заявку: ${String(deal.serviceTitle || '')}`
+                            });
+                        } else if (nextStatus === 'Отказан') {
+                            pushNotification({
+                                ts: Date.now(),
+                                kind: 'service_deal_declined',
+                                orderId: String(deal.id),
+                                title: String(deal.serviceTitle || ''),
+                                text: `❌ Мастер отказал по заявке: ${String(deal.serviceTitle || '')}`
+                            });
+                        } else if (nextStatus === 'Ожидает подтверждения клиента') {
+                            pushNotification({
+                                ts: Date.now(),
+                                kind: 'service_deal_finish_request',
+                                orderId: String(deal.id),
+                                title: String(deal.serviceTitle || ''),
+                                text: `✅ Мастер отметил работу завершённой: ${String(deal.serviceTitle || '')}`
+                            });
+                        } else if (nextStatus === 'Завершен') {
+                            pushNotification({
+                                ts: Date.now(),
+                                kind: 'service_deal_done',
+                                orderId: String(deal.id),
+                                title: String(deal.serviceTitle || ''),
+                                text: `✅ Заявка завершена: ${String(deal.serviceTitle || '')}`
+                            });
+                        }
+                    }
+
+                    if (isMyAsMaster) {
+                        if (nextStatus === 'Ожидает мастера') {
+                            pushNotification({
+                                ts: Date.now(),
+                                kind: 'service_deal_new',
+                                orderId: String(deal.id),
+                                title: String(deal.serviceTitle || ''),
+                                text: `✅ Новый отклик на вашу услугу: ${String(deal.serviceTitle || '')}`
+                            });
+                        } else if (nextStatus === 'Отменен') {
+                            pushNotification({
+                                ts: Date.now(),
+                                kind: 'service_deal_canceled',
+                                orderId: String(deal.id),
+                                title: String(deal.serviceTitle || ''),
+                                text: `❌ Клиент отменил заявку: ${String(deal.serviceTitle || '')}`
+                            });
+                        } else if (nextStatus === 'Завершен') {
+                            pushNotification({
+                                ts: Date.now(),
+                                kind: 'service_deal_done_master',
+                                orderId: String(deal.id),
+                                title: String(deal.serviceTitle || ''),
+                                text: `✅ Клиент подтвердил завершение: ${String(deal.serviceTitle || '')}`
+                            });
+                        }
+                    }
+                }
+
+                uiState.serviceDealsById = nextById;
+            } catch (e) {
+                console.warn('serviceDeals notify failed', e);
+            }
+
+            state.serviceDeals = next;
+            persistServiceDeals();
+            if (dom.screens && dom.screens.my && !dom.screens.my.classList.contains('hidden')) renderMy();
+        }, (err) => {
+            console.error('serviceDeals snapshot error', err);
         });
 }
 
@@ -648,7 +782,8 @@ const uiState = {
         title: null,
         kind: null
     },
-    ordersById: {}
+    ordersById: {},
+    serviceDealsById: {}
 };
 
 function openDialog({ title, text, okText, cancelText, input }) {
@@ -918,6 +1053,10 @@ function persistOrders() {
 
 function persistMasters() {
     localStorage.setItem(STORAGE_KEYS.masters, JSON.stringify(state.masters || []));
+}
+
+function persistServiceDeals() {
+    localStorage.setItem(STORAGE_KEYS.serviceDeals, JSON.stringify(state.serviceDeals || []));
 }
 
 function setActiveScreen(screen) {
@@ -1505,7 +1644,11 @@ function renderStatusBadge(status) {
         'Активен': 'bg-blue-50 text-blue-700',
         'Выполняется': 'bg-yellow-50 text-yellow-700',
         'Ожидает подтверждения': 'bg-purple-50 text-purple-700',
-        'Завершен': 'bg-green-50 text-green-700'
+        'Завершен': 'bg-green-50 text-green-700',
+        'Ожидает мастера': 'bg-purple-50 text-purple-700',
+        'Ожидает подтверждения клиента': 'bg-purple-50 text-purple-700',
+        'Отказан': 'bg-red-50 text-red-700',
+        'Отменен': 'bg-gray-100 text-gray-600'
     };
     const cls = map[status] || 'bg-gray-100 text-gray-600';
     return `<span class="text-[10px] font-bold px-2 py-1 rounded-full ${cls}">${escapeHtml(status)}</span>`;
@@ -1530,6 +1673,7 @@ function renderMy() {
 
     if (state.userRole === 'client') {
         const myOrders = getMyOrdersAsClient();
+        const myServiceDeals = (state.serviceDeals || []).filter((d) => normalizePhone(d.clientPhone) === normalizePhone(getUserKey()));
         if (!myOrders.length) {
             dom.my.content.innerHTML = `
                 <div class="col-span-full bg-white rounded-2xl border p-8 text-center">
@@ -1538,12 +1682,11 @@ function renderMy() {
                     <div class="mt-1 text-sm text-gray-500">Создайте заказ через кнопку «+»</div>
                 </div>
             `;
-            return;
         }
 
-        dom.my.content.innerHTML = myOrders.map((o) => {
+        const ordersBlock = myOrders.map((o) => {
             const canConfirm = o.status === 'Ожидает подтверждения';
-            const canDelete = state.session.isAdmin || normalizePhone(o.phone) === normalizePhone(getUserKey());
+            const canDelete = (state.session.isAdmin || normalizePhone(o.phone) === normalizePhone(getUserKey())) && String(o.status || 'Активен') === 'Активен';
             const canCancelClient = String(o.status || '') === 'Выполняется' && Boolean(o.assignedMasterPhone);
             return `
                 <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
@@ -1564,11 +1707,49 @@ function renderMy() {
                 </article>
             `;
         }).join('');
+
+        const dealsBlock = myServiceDeals.length ? myServiceDeals.map((d) => {
+            const st = String(d.status || '');
+            const canCancel = st === 'Ожидает мастера' || st === 'Выполняется';
+            const canConfirm = st === 'Ожидает подтверждения клиента';
+            const canDelete = st === 'Отказан' || st === 'Отменен' || st === 'Завершен';
+            return `
+                <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                    <div class="flex justify-between items-start gap-3">
+                        <div>
+                            <div class="text-xs text-gray-500 font-semibold">Услуга мастера</div>
+                            <h3 class="font-bold text-gray-900 mt-1">${escapeHtml(d.serviceTitle || '')}</h3>
+                        </div>
+                        <div class="text-right">
+                            ${renderStatusBadge(st)}
+                            ${d.priceFrom ? `<div class="mt-2 font-bold text-green-600">от ${formatPrice(d.priceFrom)} ₽</div>` : ''}
+                        </div>
+                    </div>
+                    ${canConfirm ? `<button type="button" data-action="service-deal-confirm" data-id="${escapeHtml(d.id)}" class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold">Подтвердить завершение</button>` : ''}
+                    ${canCancel ? `<button type="button" data-action="service-deal-cancel-client" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-yellow-50 text-yellow-800 py-3 rounded-2xl font-bold">Отменить заявку</button>` : ''}
+                    ${canDelete ? `<button type="button" data-action="service-deal-delete" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Удалить из истории</button>` : ''}
+                </article>
+            `;
+        }).join('') : `
+            <div class="col-span-full bg-white rounded-2xl border p-8 text-center">
+                <div class="text-3xl text-gray-300"><i class="fa-solid fa-briefcase"></i></div>
+                <div class="mt-3 font-bold text-gray-900">Заявок на услуги пока нет</div>
+                <div class="mt-1 text-sm text-gray-500">Откликайтесь на услуги в ленте мастеров</div>
+            </div>
+        `;
+
+        dom.my.content.innerHTML = `
+            <div class="col-span-full font-bold text-gray-900">Мои заказы</div>
+            ${ordersBlock || ''}
+            <div class="col-span-full font-bold text-gray-900 mt-2">Мои заявки на услуги</div>
+            ${dealsBlock}
+        `;
         return;
     }
 
     const responded = getMyRespondedOrdersAsMaster();
     const services = getMyServicesAsMaster();
+    const myIncomingDeals = (state.serviceDeals || []).filter((d) => normalizePhone(d.masterPhone) === normalizePhone(getUserKey()));
 
     const respondedBlock = responded.length ? responded.map((o) => {
         const canFinish = o.status === 'Выполняется';
@@ -1620,9 +1801,41 @@ function renderMy() {
         </div>
     `;
 
+    const dealsBlock = myIncomingDeals.length ? myIncomingDeals.map((d) => {
+        const st = String(d.status || '');
+        const canAccept = st === 'Ожидает мастера';
+        const canDecline = st === 'Ожидает мастера';
+        const canFinish = st === 'Выполняется';
+        return `
+            <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                <div class="flex justify-between items-start gap-3">
+                    <div>
+                        <div class="text-xs text-gray-500 font-semibold">${escapeHtml(d.clientName || 'Клиент')}</div>
+                        <h3 class="font-bold text-gray-900 mt-1">${escapeHtml(d.serviceTitle || '')}</h3>
+                    </div>
+                    <div class="text-right">
+                        ${renderStatusBadge(st)}
+                        ${d.priceFrom ? `<div class="mt-2 font-bold text-green-600">от ${formatPrice(d.priceFrom)} ₽</div>` : ''}
+                    </div>
+                </div>
+                ${canAccept ? `<button type="button" data-action="service-deal-accept" data-id="${escapeHtml(d.id)}" class="w-full mt-4 bg-green-600 text-white py-3 rounded-2xl font-bold">Принять</button>` : ''}
+                ${canDecline ? `<button type="button" data-action="service-deal-decline" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Отказать</button>` : ''}
+                ${canFinish ? `<button type="button" data-action="service-deal-finish" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-blue-600 text-white py-3 rounded-2xl font-bold">Работа завершена</button>` : ''}
+            </article>
+        `;
+    }).join('') : `
+        <div class="col-span-full bg-white rounded-2xl border p-8 text-center">
+            <div class="text-3xl text-gray-300"><i class="fa-solid fa-inbox"></i></div>
+            <div class="mt-3 font-bold text-gray-900">Пока нет заявок</div>
+            <div class="mt-1 text-sm text-gray-500">Клиенты будут откликаться на ваши услуги из ленты</div>
+        </div>
+    `;
+
     dom.my.content.innerHTML = `
         <div class="col-span-full font-bold text-gray-900">Откликнулся на заказы</div>
         ${respondedBlock}
+        <div class="col-span-full font-bold text-gray-900 mt-2">Заявки на мои услуги</div>
+        ${dealsBlock}
         <div class="col-span-full font-bold text-gray-900 mt-2">Мои услуги</div>
         ${servicesBlock}
     `;
@@ -1699,11 +1912,95 @@ async function handleMyClick(e) {
     if (btnOrderDelete) {
         const id = btnOrderDelete.dataset.id;
         const idx = state.orders.findIndex((o) => o.id === id && (state.session.isAdmin || normalizePhone(o.phone) === normalizePhone(getUserKey())));
+        const order = idx >= 0 ? state.orders[idx] : null;
+        if (order && !state.session.isAdmin && String(order.status || 'Активен') !== 'Активен') {
+            alert('Удалить заказ можно только когда он «Активен». Сначала отмените выполнение.');
+            return;
+        }
         if (idx >= 0) state.orders.splice(idx, 1);
         persistOrders();
         cloudDelete('orders', id);
         renderMy();
         renderFeeds();
+        return;
+    }
+
+    const btnDealAccept = e.target.closest('button[data-action="service-deal-accept"]');
+    if (btnDealAccept) {
+        const id = String(btnDealAccept.dataset.id || '');
+        const deal = (state.serviceDeals || []).find((d) => String(d.id) === id);
+        if (!deal) return;
+        deal.status = 'Выполняется';
+        persistServiceDeals();
+        cloudUpsert('serviceDeals', deal);
+        renderMy();
+        return;
+    }
+
+    const btnDealDecline = e.target.closest('button[data-action="service-deal-decline"]');
+    if (btnDealDecline) {
+        const id = String(btnDealDecline.dataset.id || '');
+        const deal = (state.serviceDeals || []).find((d) => String(d.id) === id);
+        if (!deal) return;
+        deal.status = 'Отказан';
+        persistServiceDeals();
+        cloudUpsert('serviceDeals', deal);
+        renderMy();
+        return;
+    }
+
+    const btnDealFinish = e.target.closest('button[data-action="service-deal-finish"]');
+    if (btnDealFinish) {
+        const id = String(btnDealFinish.dataset.id || '');
+        const deal = (state.serviceDeals || []).find((d) => String(d.id) === id);
+        if (!deal) return;
+        deal.status = 'Ожидает подтверждения клиента';
+        persistServiceDeals();
+        cloudUpsert('serviceDeals', deal);
+        renderMy();
+        return;
+    }
+
+    const btnDealConfirmClient = e.target.closest('button[data-action="service-deal-confirm"]');
+    if (btnDealConfirmClient) {
+        const id = String(btnDealConfirmClient.dataset.id || '');
+        const deal = (state.serviceDeals || []).find((d) => String(d.id) === id);
+        if (!deal) return;
+        deal.status = 'Завершен';
+        persistServiceDeals();
+        cloudUpsert('serviceDeals', deal);
+        renderMy();
+        return;
+    }
+
+    const btnDealCancelClient = e.target.closest('button[data-action="service-deal-cancel-client"]');
+    if (btnDealCancelClient) {
+        const id = String(btnDealCancelClient.dataset.id || '');
+        const deal = (state.serviceDeals || []).find((d) => String(d.id) === id);
+        if (!deal) return;
+        const ok = await openConfirm({
+            title: 'Отменить заявку?',
+            text: 'Заявка будет отменена и уйдёт в историю.',
+            okText: 'Отменить',
+            cancelText: 'Назад'
+        });
+        if (!ok) return;
+        deal.status = 'Отменен';
+        persistServiceDeals();
+        cloudUpsert('serviceDeals', deal);
+        renderMy();
+        return;
+    }
+
+    const btnDealDelete = e.target.closest('button[data-action="service-deal-delete"]');
+    if (btnDealDelete) {
+        const id = String(btnDealDelete.dataset.id || '');
+        const idx = (state.serviceDeals || []).findIndex((d) => String(d.id) === id);
+        if (idx >= 0) state.serviceDeals.splice(idx, 1);
+        persistServiceDeals();
+        cloudDelete('serviceDeals', id);
+        renderMy();
+        return;
     }
 }
 
