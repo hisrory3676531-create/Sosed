@@ -711,13 +711,17 @@ function pushNotification() {
 }
 
 function clearNotifications() {
-    state.notificationsUnread = 0;
     persistNotificationsUnread();
     renderNotificationsBadge();
 }
 
 function isClean(text) {
     return !hasForbiddenWords(text);
+}
+
+function openModal(el) {
+    el.classList.remove('hidden');
+    el.classList.add('flex');
 }
 
 function closeModal(el) {
