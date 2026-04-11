@@ -106,13 +106,23 @@ function ensureFirebaseSdkLoaded() {
     if (!hasApp) {
         const s = document.createElement('script');
         s.src = appUrl;
-        s.async = true;
+        s.async = false;
+        s.onload = () => {
+            console.log('Firebase app SDK loaded');
+            setTimeout(initCloud, 0);
+        };
+        s.onerror = (e) => console.error('Failed to load Firebase app SDK', e);
         document.head.appendChild(s);
     }
     if (!hasFs) {
         const s = document.createElement('script');
         s.src = fsUrl;
-        s.async = true;
+        s.async = false;
+        s.onload = () => {
+            console.log('Firebase Firestore SDK loaded');
+            setTimeout(initCloud, 0);
+        };
+        s.onerror = (e) => console.error('Failed to load Firebase Firestore SDK', e);
         document.head.appendChild(s);
     }
 }
