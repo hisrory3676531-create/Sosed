@@ -38,8 +38,9 @@
                         <button id="btn-detect-location" type="button" class="bg-blue-50 p-2 rounded-full text-blue-600" aria-label="Определить местоположение">
                             <i class="fa-solid fa-location-crosshairs"></i>
                         </button>
-                        <button type="button" class="bg-blue-50 p-2 rounded-full text-blue-600" aria-label="Уведомления">
+                        <button id="btn-notifications" type="button" class="bg-blue-50 p-2 rounded-full text-blue-600 relative" aria-label="Уведомления">
                             <i class="fa-solid fa-bell"></i>
+                            <span id="notif-badge" class="hidden absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-red-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center">1</span>
                         </button>
                     </div>
                 </div>
@@ -327,6 +328,8 @@
 
     </div>
 
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
