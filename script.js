@@ -1066,8 +1066,474 @@ function persistOrders() {
 function persistMasters() {
     localStorage.setItem(STORAGE_KEYS.masters, JSON.stringify(state.masters || []));
 }
+
 function persistServiceDeals() {
     localStorage.setItem(STORAGE_KEYS.serviceDeals, JSON.stringify(state.serviceDeals || []));
+}
+
+function persistResponses() {
+    localStorage.setItem(STORAGE_KEYS.masterResponses, JSON.stringify(state.masterResponses || []));
+}
+
+function requireAuth(pendingScreen) {
+    if (isLoggedIn()) return true;
+    state.pendingAfterAuth = pendingScreen || null;
+    openAuthModal();
+    return false;
+}
+
+function applyRoleUI() {
+    if (dom.profile && dom.profile.roleClient && dom.profile.roleMaster) {
+        const isClient = state.userRole === 'client';
+        dom.profile.roleClient.className = `flex-1 py-2 rounded-lg font-bold text-sm ${isClient ? 'role-active' : 'role-inactive'}`;
+        dom.profile.roleMaster.className = `flex-1 py-2 rounded-lg font-bold text-sm ${!isClient ? 'role-active' : 'role-inactive'}`;
+    }
+    if (dom.my && dom.my.roleBadge) {
+        dom.my.roleBadge.textContent = state.userRole === 'master' ? 'Мастер' : 'Клиент';
+    }
+}
+
+function setRole(role) {
+    const next = role === 'master' ? 'master' : 'client';
+    state.userRole = next;
+    localStorage.setItem(STORAGE_KEYS.userRole, next);
+    applyRoleUI();
+    renderFeeds();
+    if (dom.screens && dom.screens.my && !dom.screens.my.classList.contains('hidden')) renderMy();
+}
+
+function renderLocationUI() {
+    const city = state.location.city || 'Красноярск';
+    const district = state.location.district || '';
+
+    if (dom.header && dom.header.locationText) {
+        dom.header.locationText.innerHTML = `<i class="fa-solid fa-location-dot"></i> ${escapeHtml(city)}${district ? `, ${escapeHtml(district)}` : ''}`;
+    }
+    if (dom.profile && dom.profile.city) dom.profile.city.value = city;
+    if (dom.profile && dom.profile.district && !dom.profile.district.value) dom.profile.district.value = district;
+
+    if (dom.inputs && dom.inputs.orderCity) dom.inputs.orderCity.value = city;
+    if (dom.inputs && dom.inputs.serviceCity) dom.inputs.serviceCity.value = city;
+    if (dom.inputs && dom.inputs.orderDistrict && !dom.inputs.orderDistrict.value) dom.inputs.orderDistrict.value = district;
+    if (dom.inputs && dom.inputs.serviceDistrict && !dom.inputs.serviceDistrict.value) dom.inputs.serviceDistrict.value = district;
+}
+
+function renderProfile() {
+    if (!dom.profile) return;
+
+    const name = state.session && state.session.name ? state.session.name : 'Гость';
+    const phone = state.session && state.session.phone ? state.session.phone : null;
+
+    if (dom.profile.name) dom.profile.name.textContent = name;
+    if (dom.profile.phone) dom.profile.phone.textContent = phone ? phone : 'Телефон не указан';
+    if (dom.profile.subStatus) {
+        dom.profile.subStatus.textContent = hasSubscription()
+            ? `Подписка активна (${getSubscriptionDaysLeft()} дн.)`
+            : 'Подписка неактивна';
+    }
+    if (dom.profile.subtitle) {
+        dom.profile.subtitle.textContent = isLoggedIn()
+            ? 'Профиль активен'
+            : 'Войдите, чтобы публиковать заказы и услуги';
+    }
+
+    if (dom.profile.editName) dom.profile.editName.value = state.session.name || '';
+    if (dom.profile.editPhone) dom.profile.editPhone.value = state.session.phone || '';
+
+    if (dom.profile.avatar && state.session && state.session.avatar) {
+        dom.profile.avatar.src = state.session.avatar;
+    }
+
+    if (dom.profile.city) dom.profile.city.value = state.location.city || 'Красноярск';
+    if (dom.profile.district && !dom.profile.district.value) dom.profile.district.value = state.location.district || '';
+
+    applyRoleUI();
+}
+
+function handlePlusClick() {
+    if (!requireAuth('plus')) return;
+    if (state.userRole === 'master') setActiveScreen('add-service');
+    else setActiveScreen('create-order');
+}
+
+function renderRatingLine(item) {
+    const rating = Number(item && item.rating);
+    const count = Number(item && item.ratingCount);
+    if (!rating || !count) return '';
+    return `<div class="text-xs text-gray-500 mt-1">⭐ ${escapeHtml(String(rating))} (${escapeHtml(String(count))})</div>`;
+}
+
+function renderMastersFeed() {
+    if (!dom.feeds || !dom.feeds.masters) return;
+    const items = Array.isArray(state.masters) ? state.masters : [];
+
+    const filtered = items.filter((m) => {
+        if (!m) return false;
+        if (state.activeChip === 'all') return true;
+        const cat = String(m.cat || m.category || '').toLowerCase();
+        const chip = String(state.activeChip || '').toLowerCase();
+        return cat.includes(chip);
+    });
+
+    if (!filtered.length) {
+        dom.feeds.masters.innerHTML = `<div class="col-span-full text-center text-gray-400 py-10">Мастера не найдены</div>`;
+        return;
+    }
+
+    dom.feeds.masters.innerHTML = filtered.map((m) => {
+        const title = String(m.title || m.name || 'Мастер');
+        const desc = String(m.desc || m.description || '').trim();
+        const cat = String(m.cat || m.category || '');
+        const priceFrom = m.priceFrom || m.price || '';
+        const canContact = state.userRole !== 'master';
+        return `
+            <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                <div class="font-bold text-gray-900">${escapeHtml(title)}</div>
+                ${cat ? `<div class="text-xs text-gray-500 mt-1">${escapeHtml(cat)}</div>` : ''}
+                ${renderRatingLine(m)}
+                ${desc ? `<div class="text-sm text-gray-600 mt-2 line-clamp-2">${escapeHtml(desc)}</div>` : ''}
+                ${priceFrom ? `<div class="mt-2 font-bold text-green-600">от ${escapeHtml(formatPrice(priceFrom))} ₽</div>` : ''}
+                ${canContact ? `
+                    <button type="button" data-action="contact" data-kind="master" data-id="${escapeHtml(m.id)}" data-phone="${escapeHtml(m.phone || '')}" data-title="${escapeHtml(title)}"
+                        class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold shadow-md">
+                        Связаться
+                    </button>
+                ` : ''}
+            </article>
+        `;
+    }).join('');
+}
+
+function renderOrdersFeed() {
+    if (!dom.feeds || !dom.feeds.orders) return;
+    const items = Array.isArray(state.orders) ? state.orders : [];
+    const filtered = items.filter((o) => String(o && o.status ? o.status : 'Активен') === 'Активен');
+
+    if (!filtered.length) {
+        dom.feeds.orders.innerHTML = `<div class="col-span-full text-center text-gray-400 py-10">Активных заказов нет</div>`;
+        return;
+    }
+
+    dom.feeds.orders.innerHTML = filtered.map((o) => {
+        const title = String(o.title || 'Заказ');
+        const cat = String(o.cat || '');
+        const price = o.price ? `${formatPrice(o.price)} ₽` : '';
+        const addr = String(o.address || '');
+        const canContact = state.userRole === 'master';
+        return `
+            <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                <div class="font-bold text-gray-900">${escapeHtml(title)}</div>
+                ${cat ? `<div class="text-xs text-gray-500 mt-1">${escapeHtml(cat)}</div>` : ''}
+                ${addr ? `<div class="text-sm text-gray-600 mt-2 line-clamp-2">${escapeHtml(addr)}</div>` : ''}
+                ${price ? `<div class="mt-2 font-bold text-green-600">${escapeHtml(price)}</div>` : ''}
+                ${canContact ? `
+                    <button type="button" data-action="contact" data-kind="order" data-id="${escapeHtml(o.id)}" data-phone="${escapeHtml(o.phone || '')}" data-title="${escapeHtml(title)}"
+                        class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold shadow-md">
+                        Откликнуться
+                    </button>
+                ` : ''}
+            </article>
+        `;
+    }).join('');
+}
+
+function renderFeeds() {
+    renderMastersFeed();
+    renderOrdersFeed();
+}
+
+function renderStatusBadge(status) {
+    const st = String(status || '').trim();
+    const map = {
+        'Активен': 'bg-blue-50 text-blue-600',
+        'Выполняется': 'bg-green-50 text-green-700',
+        'Ожидает подтверждения': 'bg-yellow-50 text-yellow-700',
+        'Ожидает мастера': 'bg-blue-50 text-blue-600',
+        'Ожидает подтверждения клиента': 'bg-yellow-50 text-yellow-700',
+        'Отказан': 'bg-red-50 text-red-600',
+        'Отменен': 'bg-gray-100 text-gray-600',
+        'Завершен': 'bg-gray-100 text-gray-700'
+    };
+    const cls = map[st] || 'bg-gray-100 text-gray-600';
+    return `<span class="text-xs font-bold px-3 py-1 rounded-full ${cls}">${escapeHtml(st || '—')}</span>`;
+}
+
+function renderMy() {
+    if (!dom.my || !dom.my.content) return;
+    if (!requireAuth('my')) return;
+    applyRoleUI();
+
+    const myPhone = state.session && state.session.phone ? normalizePhone(state.session.phone) : null;
+    const blocks = [];
+
+    if (state.userRole === 'client') {
+        const myOrders = (state.orders || []).filter((o) => myPhone && normalizePhone(o.phone) === myPhone);
+        const myDeals = (state.serviceDeals || []).filter((d) => myPhone && normalizePhone(d.clientPhone) === myPhone);
+
+        blocks.push(...myOrders.map((o) => {
+            const st = String(o.status || 'Активен');
+            const canCancel = st === 'Выполняется';
+            const canConfirm = st === 'Ожидает подтверждения';
+            const canDelete = st === 'Активен';
+            return `
+                <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                    <div class="flex items-center justify-between gap-2">
+                        <div class="font-bold">${escapeHtml(o.title || 'Заказ')}</div>
+                        ${renderStatusBadge(st)}
+                    </div>
+                    ${o.address ? `<div class="text-sm text-gray-600 mt-2 line-clamp-2">${escapeHtml(o.address)}</div>` : ''}
+                    ${canConfirm ? `<button type="button" data-action="deal-confirm" data-id="${escapeHtml(o.id)}" class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold">Подтвердить завершение</button>` : ''}
+                    ${canCancel ? `<button type="button" data-action="deal-cancel-client" data-id="${escapeHtml(o.id)}" class="w-full mt-3 bg-yellow-50 text-yellow-800 py-3 rounded-2xl font-bold">Отменить выполнение</button>` : ''}
+                    ${canDelete ? `<button type="button" data-action="order-delete" data-id="${escapeHtml(o.id)}" class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Удалить</button>` : ''}
+                </article>
+            `;
+        }));
+
+        blocks.push(...myDeals.map((d) => {
+            const st = String(d.status || '');
+            const canConfirm = st === 'Ожидает подтверждения клиента';
+            const canCancel = st === 'Ожидает мастера';
+            const canDelete = st === 'Отказан' || st === 'Отменен' || st === 'Завершен';
+            return `
+                <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                    <div class="flex items-center justify-between gap-2">
+                        <div class="font-bold">${escapeHtml(d.serviceTitle || 'Услуга')}</div>
+                        ${renderStatusBadge(st)}
+                    </div>
+                    ${d.masterName ? `<div class="text-sm text-gray-600 mt-2">Мастер: <b>${escapeHtml(d.masterName)}</b></div>` : ''}
+                    ${canConfirm ? `<button type="button" data-action="service-deal-confirm" data-id="${escapeHtml(d.id)}" class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold">Подтвердить завершение</button>` : ''}
+                    ${canCancel ? `<button type="button" data-action="service-deal-cancel-client" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-yellow-50 text-yellow-800 py-3 rounded-2xl font-bold">Отменить заявку</button>` : ''}
+                    ${canDelete ? `<button type="button" data-action="service-deal-delete" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Удалить из истории</button>` : ''}
+                </article>
+            `;
+        }));
+    } else {
+        const myOrders = (state.orders || []).filter((o) => myPhone && normalizePhone(o.assignedMasterPhone) === myPhone);
+        const incomingDeals = (state.serviceDeals || []).filter((d) => myPhone && normalizePhone(d.masterPhone) === myPhone);
+
+        blocks.push(...myOrders.map((o) => {
+            const st = String(o.status || '');
+            const canFinish = st === 'Выполняется';
+            const canCancel = st === 'Выполняется';
+            return `
+                <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                    <div class="flex items-center justify-between gap-2">
+                        <div class="font-bold">${escapeHtml(o.title || 'Заказ')}</div>
+                        ${renderStatusBadge(st)}
+                    </div>
+                    ${canFinish ? `<button type="button" data-action="deal-finish" data-id="${escapeHtml(o.id)}" class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold">Отметить выполненным</button>` : ''}
+                    ${canCancel ? `<button type="button" data-action="deal-cancel-master" data-id="${escapeHtml(o.id)}" class="w-full mt-3 bg-yellow-50 text-yellow-800 py-3 rounded-2xl font-bold">Отказаться</button>` : ''}
+                </article>
+            `;
+        }));
+
+        blocks.push(...incomingDeals.map((d) => {
+            const st = String(d.status || '');
+            const canAccept = st === 'Ожидает мастера';
+            const canDecline = st === 'Ожидает мастера';
+            const canFinish = st === 'Выполняется';
+            return `
+                <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                    <div class="flex items-center justify-between gap-2">
+                        <div class="font-bold">${escapeHtml(d.serviceTitle || 'Услуга')}</div>
+                        ${renderStatusBadge(st)}
+                    </div>
+                    ${d.clientName ? `<div class="text-sm text-gray-600 mt-2">Клиент: <b>${escapeHtml(d.clientName)}</b></div>` : ''}
+                    ${canAccept ? `<button type="button" data-action="service-deal-accept" data-id="${escapeHtml(d.id)}" class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold">Принять</button>` : ''}
+                    ${canDecline ? `<button type="button" data-action="service-deal-decline" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Отказать</button>` : ''}
+                    ${canFinish ? `<button type="button" data-action="service-deal-finish" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-green-50 text-green-700 py-3 rounded-2xl font-bold">Завершить</button>` : ''}
+                </article>
+            `;
+        }));
+    }
+
+    dom.my.content.innerHTML = blocks.length ? blocks.join('') : `<div class="col-span-full text-center text-gray-400 py-10">Пока пусто</div>`;
+}
+
+function openContactModal({ phone, title, kind }) {
+    uiState.contact.phone = phone || null;
+    uiState.contact.title = title || null;
+    uiState.contact.kind = kind || null;
+    if (dom.contact && dom.contact.info) dom.contact.info.textContent = title ? `Контакт: ${title}` : 'Контакт';
+    if (dom.contact.phone) dom.contact.phone.textContent = '';
+    if (dom.contact.phoneHidden) dom.contact.phoneHidden.classList.remove('hidden');
+    if (dom.contact.phoneShown) dom.contact.phoneShown.classList.add('hidden');
+    openModal(dom.modals.contact);
+}
+
+function closeContactModal() {
+    uiState.contact.phone = null;
+    uiState.contact.title = null;
+    uiState.contact.kind = null;
+    closeModal(dom.modals.contact);
+}
+
+async function acceptOrder(orderId) {
+    if (state.userRole !== 'master') return false;
+    if (!requireAuth('my')) return false;
+    if (!await ensureUserPhone()) return false;
+
+    const id = String(orderId || '');
+    const order = state.orders.find((o) => String(o.id) === id);
+    if (!order) return false;
+    if (String(order.status || 'Активен') !== 'Активен') return false;
+
+    order.status = 'Выполняется';
+    order.assignedMasterPhone = normalizePhone(state.session.phone);
+    persistOrders();
+    cloudUpsert('orders', order);
+
+    if (!Array.isArray(state.masterResponses)) state.masterResponses = [];
+    if (!state.masterResponses.includes(id)) state.masterResponses.push(id);
+    persistResponses();
+    return true;
+}
+
+async function handleFeedClick(e) {
+    const btn = e.target.closest('button[data-action="contact"]');
+    if (!btn) return;
+
+    const kind = String(btn.dataset.kind || '');
+    const id = String(btn.dataset.id || '');
+    const phone = String(btn.dataset.phone || '');
+    const title = String(btn.dataset.title || '');
+
+    if (kind === 'order') {
+        if (state.userRole !== 'master') {
+            alert('Откликаться на заказы может только мастер (переключите роль в профиле).');
+            return;
+        }
+        const ok = await openConfirm({
+            title: 'Принять заказ?',
+            text: `Заказ: ${title}`,
+            okText: 'Принять',
+            cancelText: 'Отмена'
+        });
+        if (!ok) return;
+        const accepted = await acceptOrder(id);
+        if (!accepted) return;
+        pushNotification({ ts: Date.now(), kind: 'order_taken', orderId: id, title, text: `✅ Вы приняли заказ: ${title}` });
+        renderFeeds();
+        return;
+    }
+
+    if (kind === 'master') {
+        if (state.userRole !== 'client') {
+            alert('Связаться с мастером может только клиент (переключите роль в профиле).');
+            return;
+        }
+        if (!requireAuth('my')) return;
+        if (!await ensureUserPhone()) return;
+
+        const masterPhone = normalizePhone(phone);
+        const clientPhone = normalizePhone(state.session.phone);
+
+        const dealExists = (state.serviceDeals || []).some((d) => (
+            normalizePhone(d.masterPhone) === masterPhone
+            && normalizePhone(d.clientPhone) === clientPhone
+            && String(d.status || '') !== 'Отменен'
+        ));
+
+        if (!dealExists) {
+            const deal = {
+                id: String(Date.now()),
+                createdAt: Date.now(),
+                status: 'Ожидает мастера',
+                serviceTitle: title,
+                masterPhone,
+                masterName: title,
+                clientPhone,
+                clientName: state.session.name || 'Клиент'
+            };
+            state.serviceDeals = (state.serviceDeals || []).concat(deal);
+            persistServiceDeals();
+            cloudUpsert('serviceDeals', deal);
+        }
+
+        openContactModal({ phone: masterPhone, title, kind: 'master' });
+        renderMy();
+        return;
+    }
+}
+
+async function submitOrder() {
+    if (!requireAuth('create-order')) return;
+    if (!await ensureUserPhone()) return;
+
+    const title = dom.inputs.orderTitle.value.trim();
+    const cat = dom.inputs.orderCat.value;
+    const price = dom.inputs.orderPrice.value ? Number(dom.inputs.orderPrice.value) : null;
+    const address = dom.inputs.orderAddress.value.trim();
+    const district = dom.inputs.orderDistrict.value.trim();
+
+    if (!title) {
+        alert('Укажите что нужно сделать');
+        return;
+    }
+    if (!ensureCleanField(title, 'Заголовок')) return;
+    if (!ensureCleanField(address, 'Адрес')) return;
+
+    const o = {
+        id: String(Date.now()),
+        createdAt: Date.now(),
+        time: 'Только что',
+        title,
+        cat,
+        price,
+        address,
+        city: state.location.city,
+        district,
+        phone: normalizePhone(state.session.phone),
+        status: 'Активен',
+        assignedMasterPhone: null
+    };
+
+    state.orders = [o, ...(state.orders || [])];
+    persistOrders();
+    cloudUpsert('orders', o);
+    dom.forms['create-order'].reset();
+    renderFeeds();
+    setActiveScreen('home');
+}
+
+async function submitService() {
+    if (!requireAuth('add-service')) return;
+    if (!await ensureUserPhone()) return;
+
+    const cat = dom.inputs.serviceCat.value;
+    const desc = dom.inputs.serviceDesc.value.trim();
+    const priceFrom = dom.inputs.servicePrice.value ? Number(dom.inputs.servicePrice.value) : null;
+    const address = dom.inputs.serviceAddress.value.trim();
+    const district = dom.inputs.serviceDistrict.value.trim();
+
+    if (!cat) {
+        alert('Выберите категорию');
+        return;
+    }
+    if (!ensureCleanField(desc, 'Описание')) return;
+
+    const m = {
+        id: String(Date.now()),
+        createdAt: Date.now(),
+        phone: normalizePhone(state.session.phone),
+        name: state.session.name || 'Мастер',
+        title: state.session.name || 'Мастер',
+        cat,
+        desc,
+        priceFrom,
+        address,
+        city: state.location.city,
+        district,
+        rating: 0,
+        ratingCount: 0
+    };
+
+    state.masters = [m, ...(state.masters || [])];
+    persistMasters();
+    cloudUpsert('masters', m);
+    dom.forms['add-service'].reset();
+    renderFeeds();
+    setActiveScreen('home');
 }
 
 function setActiveScreen(screen) {
