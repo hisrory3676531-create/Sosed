@@ -589,6 +589,7 @@ const dom = {
         home: document.getElementById('screen-home'),
         profile: document.getElementById('screen-profile'),
         'create-order': document.getElementById('screen-create-order'),
+        notifications: document.getElementById('screen-notifications'),
         'add-service': document.getElementById('screen-add-service'),
         my: document.getElementById('screen-my')
     },
@@ -604,6 +605,7 @@ const dom = {
     nav: {
         home: document.getElementById('nav-home'),
         my: document.getElementById('nav-my'),
+        notifications: document.getElementById('nav-notifications'),
         profile: document.getElementById('nav-profile'),
         plus: document.getElementById('main-plus-btn')
     },
@@ -701,6 +703,10 @@ const dom = {
         input: document.getElementById('dialog-input'),
         ok: document.getElementById('btn-dialog-ok'),
         cancel: document.getElementById('btn-dialog-cancel')
+    },
+    notifications: {
+        list: document.getElementById('notifications-list'),
+        clear: document.getElementById('btn-notifications-clear')
     }
 };
 
@@ -1060,7 +1066,6 @@ function persistOrders() {
 function persistMasters() {
     localStorage.setItem(STORAGE_KEYS.masters, JSON.stringify(state.masters || []));
 }
-
 function persistServiceDeals() {
     localStorage.setItem(STORAGE_KEYS.serviceDeals, JSON.stringify(state.serviceDeals || []));
 }
@@ -1077,6 +1082,42 @@ function setActiveScreen(screen) {
 
     if (screen === 'home') renderFeeds();
     if (screen === 'my') renderMy();
+    if (screen === 'notifications') renderNotificationsScreen();
+}
+
+function renderNotificationsScreen() {
+    if (!dom.notifications || !dom.notifications.list) return;
+
+    const items = Array.isArray(state.notifications) ? state.notifications.slice().reverse() : [];
+    if (!items.length) {
+        dom.notifications.list.innerHTML = `
+            <div class="bg-white rounded-2xl border p-8 text-center">
+                <div class="text-3xl text-gray-300"><i class="fa-solid fa-bell"></i></div>
+                <div class="mt-3 font-bold text-gray-900">Новых уведомлений нет</div>
+                <div class="mt-1 text-sm text-gray-500">Здесь будут события по заказам и услугам</div>
+            </div>
+        `;
+    } else {
+        dom.notifications.list.innerHTML = items.map((n) => {
+            const text = String(n && n.text ? n.text : '').trim();
+            const title = String(n && n.title ? n.title : '').trim();
+            const ts = Number(n && n.ts ? n.ts : 0);
+            const time = ts ? new Date(ts).toLocaleString() : '';
+            return `
+                <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                    ${title ? `<div class=\"text-xs text-gray-500 font-semibold\">${escapeHtml(title)}</div>` : ''}
+                    <div class="font-semibold text-gray-900">${escapeHtml(text)}</div>
+                    ${time ? `<div class=\"mt-2 text-[11px] text-gray-400 font-semibold\">${escapeHtml(time)}</div>` : ''}
+                </article>
+            `;
+        }).join('');
+    }
+
+    if ((Number(state.notificationsUnread) || 0) > 0) {
+        state.notificationsUnread = 0;
+        persistNotificationsUnread();
+        renderNotificationsBadge();
+    }
 }
 
 function setActiveFeed(feed) {
@@ -1086,812 +1127,6 @@ function setActiveFeed(feed) {
     dom.tabs.orders.className = `flex-1 py-2 rounded-xl text-sm font-bold ${!isMasters ? 'tab-active' : 'tab-inactive'}`;
     dom.feeds.masters.classList.toggle('hidden', !isMasters);
     dom.feeds.orders.classList.toggle('hidden', isMasters);
-}
-
-function renderStars(rating) {
-    const r = Math.max(0, Math.min(5, Number(rating) || 0));
-    const full = Math.floor(r);
-    const half = r - full >= 0.5;
-    let html = '';
-
-    for (let i = 0; i < 5; i++) {
-        if (i < full) html += '<i class="fa-solid fa-star text-yellow-500"></i>';
-        else if (i === full && half) html += '<i class="fa-solid fa-star-half-stroke text-yellow-500"></i>';
-        else html += '<i class="fa-regular fa-star text-yellow-500"></i>';
-    }
-
-    return html;
-}
-
-function renderLocationUI() {
-    const city = state.location.city || 'Красноярск';
-    const district = state.location.district ? `, ${state.location.district}` : '';
-    if (dom.header.locationText) dom.header.locationText.innerHTML = `<i class="fa-solid fa-location-dot"></i> ${escapeHtml(city)}${escapeHtml(district)}`;
-    if (dom.profile.city) dom.profile.city.value = city;
-    if (dom.profile.district) dom.profile.district.value = state.location.district || '';
-    if (dom.inputs.orderCity) dom.inputs.orderCity.value = city;
-    if (dom.inputs.orderDistrict) dom.inputs.orderDistrict.value = state.location.district || '';
-    if (dom.inputs.serviceCity) dom.inputs.serviceCity.value = city;
-    if (dom.inputs.serviceDistrict) dom.inputs.serviceDistrict.value = state.location.district || '';
-}
-
-// ==========================================
-// 4) RENDER
-// ==========================================
-
-function renderFeeds() {
-    renderMastersFeed();
-    renderOrdersFeed();
-    setActiveFeed(state.activeFeed);
-}
-
-function getNearbyFirstSort(a, b) {
-    const d = String(state.location.district || '').trim().toLowerCase();
-    if (!d) return 0;
-    const aNear = String(a.district || a.address || '').toLowerCase().includes(d);
-    const bNear = String(b.district || b.address || '').toLowerCase().includes(d);
-    return Number(bNear) - Number(aNear);
-}
-
-const CHIP_TO_CATEGORIES = {
-    moroz: ['Запуск авто в мороз', 'Помощь в мороз', 'Отогрев'],
-    electro: ['Электрика'],
-    water: ['Сантехника'],
-    build: ['Сборка мебели', 'Слесарь', 'Установщик'],
-    loader: ['Грузчик'],
-    nanny: ['Няня'],
-    pets: ['Выгул собак'],
-    it: ['IT-помощь']
-};
-
-function passesChipFilter(item, keyField) {
-    const chip = state.activeChip;
-    if (!chip || chip === 'all') return true;
-    const allowed = CHIP_TO_CATEGORIES[chip];
-
-    if (!allowed || !allowed.length) return true;
-    const v = String(item[keyField] || '').toLowerCase();
-    return allowed.some((c) => v.includes(String(c).toLowerCase()));
-}
-
-function renderMastersFeed() {
-    const filtered = state.masters
-        .filter((m) => passesChipFilter(m, 'category'))
-        .slice()
-        .sort(getNearbyFirstSort);
-
-    if (!filtered.length) {
-        dom.feeds.masters.innerHTML = `
-            <div class="col-span-full bg-white rounded-2xl border p-8 text-center">
-                <div class="text-3xl text-gray-300"><i class="fa-solid fa-users"></i></div>
-                <div class="mt-3 font-bold text-gray-900">Пока нет мастеров</div>
-                <div class="mt-1 text-sm text-gray-500">Станьте первым в своём районе</div>
-            </div>
-        `;
-        return;
-    }
-
-    dom.feeds.masters.innerHTML = filtered.map((m) => {
-        const d = String(state.location.district || '').trim().toLowerCase();
-        const isNear = d && String(m.district || m.address || '').toLowerCase().includes(d);
-        const isAdmin = state.session.isAdmin;
-        const adminDeleteBtn = isAdmin ? `<button type="button" data-action="admin-delete" data-kind="master" data-id="${m.id}" class="w-full mt-2 bg-red-600 text-white py-2 rounded-xl text-xs font-bold mb-2">УДАЛИТЬ (АДМИН)</button>` : '';
-        return `
-            <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between">
-                <div>
-                    <div class="flex justify-between items-start gap-3">
-                        <div class="flex space-x-3 min-w-0">
-                            <img src="${escapeHtml(m.photo)}" class="w-12 h-12 rounded-full object-cover" alt="${escapeHtml(m.name)}">
-                            <div class="min-w-0">
-                                <h3 class="font-bold text-gray-900 truncate">${escapeHtml(m.name)}</h3>
-                                <p class="text-xs text-blue-600 font-semibold">${escapeHtml(m.category)}</p>
-                                <div class="flex items-center gap-1 text-xs mt-1">${renderStars(m.rating)}<span class="text-gray-500 ml-1">${Number(m.rating).toFixed(1)}</span></div>
-                            </div>
-                        </div>
-                        <p class="text-sm font-bold text-green-600 whitespace-nowrap">от ${formatPrice(m.priceFrom)} ₽</p>
-                    </div>
-                    ${isNear ? '<div class="mt-3"><span class="text-[10px] font-bold bg-green-50 text-green-700 px-2 py-1 rounded-full">Рядом с вами</span></div>' : ''}
-                    <p class="text-[11px] text-gray-500 mt-3 font-semibold">
-                        <i class="fa-solid fa-location-dot"></i> ${escapeHtml(m.address)}
-                    </p>
-                    <p class="text-sm text-gray-600 mt-1 line-clamp-2">${escapeHtml(m.desc)}</p>
-                </div>
-                ${adminDeleteBtn}
-                <button type="button" data-action="contact" data-kind="master" data-id="${escapeHtml(m.id)}" data-phone="${escapeHtml(m.phone)}" data-title="${escapeHtml(m.category)}"
-                    class="w-full mt-4 bg-gray-100 text-blue-600 py-3 rounded-2xl font-bold">
-                    Связаться
-                </button>
-            </article>
-        `;
-    }).join('');
-}
-
-function renderOrdersFeed() {
-    const filtered = state.orders
-        .filter((o) => String(o.status || 'Активен') === 'Активен' && !o.assignedMasterPhone)
-        .filter((o) => passesChipFilter(o, 'cat'))
-        .slice()
-        .sort(getNearbyFirstSort);
-
-    if (!filtered.length) {
-        dom.feeds.orders.innerHTML = `
-            <div class="col-span-full bg-white rounded-2xl border p-8 text-center">
-                <div class="text-3xl text-gray-300"><i class="fa-solid fa-clipboard-list"></i></div>
-                <div class="mt-3 font-bold text-gray-900">В этом районе пока нет заказов</div>
-                <div class="mt-1 text-sm text-gray-500">Создайте заказ — соседи откликнутся</div>
-            </div>
-        `;
-        return;
-    }
-
-    dom.feeds.orders.innerHTML = filtered.map((o) => {
-        const d = String(state.location.district || '').trim().toLowerCase();
-        const isNear = d && String(o.district || o.address || '').toLowerCase().includes(d);
-        const isAdmin = state.session.isAdmin;
-        const adminDeleteBtn = isAdmin ? `<button type="button" data-action="admin-delete" data-kind="order" data-id="${escapeHtml(o.id)}" class="w-full mt-2 bg-red-600 text-white py-2 rounded-xl text-xs font-bold mb-2">УДАЛИТЬ (АДМИН)</button>` : '';
-        return `
-            <article class="bg-white p-4 rounded-2xl shadow-sm border border-blue-100 border-l-4 border-l-blue-500 flex flex-col justify-between">
-                <div>
-                    <div class="flex justify-between items-start mb-2 gap-3">
-                        <span class="text-xs bg-blue-50 text-blue-600 px-2 py-1 rounded font-semibold">${escapeHtml(o.cat)}</span>
-                        <span class="text-xs text-gray-400 whitespace-nowrap">${escapeHtml(o.time)}</span>
-                    </div>
-                    ${isNear ? '<div class="mb-2"><span class="text-[10px] font-bold bg-green-50 text-green-700 px-2 py-1 rounded-full">Рядом с вами</span></div>' : ''}
-                    <h3 class="font-bold text-gray-900 text-lg leading-tight">${escapeHtml(o.title)}</h3>
-                    <p class="text-[11px] text-gray-500 mt-2 font-semibold">
-                        <i class="fa-solid fa-location-dot"></i> ${escapeHtml(o.address)}
-                    </p>
-                    <div class="flex justify-between items-center mt-3">
-                        <div class="flex items-center space-x-2 text-xs text-gray-500">
-                            <i class="fa-solid fa-user"></i> <span>${escapeHtml(o.author)}</span>
-                        </div>
-                        <p class="font-bold text-green-600 text-lg whitespace-nowrap">${formatPrice(o.price)} ₽</p>
-                    </div>
-                </div>
-                ${adminDeleteBtn}
-                <button type="button" data-action="contact" data-kind="order" data-id="${escapeHtml(o.id)}" data-phone="${escapeHtml(o.phone)}" data-title="${escapeHtml(o.title)}"
-                    class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold shadow-md">
-                    Откликнуться
-                </button>
-            </article>
-        `;
-    }).join('');
-}
-
-function renderProfile() {
-    if (isLoggedIn()) {
-        const name = state.session.name || (state.session.isAdmin ? 'Администратор' : 'Пользователь');
-        if (dom.profile.name) dom.profile.name.textContent = name;
-        if (dom.profile.phone) dom.profile.phone.textContent = state.session.phone ? state.session.phone : 'Телефон не указан';
-        if (dom.profile.subStatus) {
-            if (hasSubscription()) {
-                const days = getSubscriptionDaysLeft();
-                dom.profile.subStatus.textContent = days > 0 ? `Подписка активна (${days} дн.)` : 'Подписка активна';
-            } else {
-                dom.profile.subStatus.textContent = 'Подписка неактивна';
-            }
-        }
-        dom.profile.subtitle.textContent = state.session.isAdmin ? 'Режим администратора' : 'Выберите роль — так изменится поведение кнопки «+»';
-        dom.profile.logout.classList.remove('hidden');
-    } else {
-        if (dom.profile.name) dom.profile.name.textContent = 'Гость';
-        if (dom.profile.phone) dom.profile.phone.textContent = 'Телефон не указан';
-        if (dom.profile.subStatus) dom.profile.subStatus.textContent = 'Подписка неактивна';
-        dom.profile.subtitle.textContent = 'Войдите, чтобы публиковать заказы и услуги';
-        dom.profile.logout.classList.add('hidden');
-    }
-
-    if (dom.profile.editName) dom.profile.editName.value = state.session.name || '';
-    if (dom.profile.editPhone) dom.profile.editPhone.value = state.session.phone || '';
-    if (dom.profile.avatar) {
-        dom.profile.avatar.src = state.session.avatar || 'https://i.pravatar.cc/150?img=33';
-    }
-
-    applyRoleUI();
-}
-
-function applyRoleUI() {
-    const isClient = state.userRole === 'client';
-
-    dom.profile.roleClient.className = `flex-1 py-2 rounded-lg font-bold text-sm ${isClient ? 'role-active' : 'role-inactive'}`;
-    dom.profile.roleMaster.className = `flex-1 py-2 rounded-lg font-bold text-sm ${!isClient ? 'role-active' : 'role-inactive'}`;
-
-    dom.nav.plus.classList.toggle('bg-blue-600', isClient);
-    dom.nav.plus.classList.toggle('bg-green-600', !isClient);
-}
-
-function requireAuth(nextAction) {
-    if (isLoggedIn()) return true;
-    state.pendingAfterAuth = nextAction || null;
-    openAuthModal();
-    return false;
-}
-
-function handlePlusClick() {
-    if (!requireAuth('plus')) return;
-    if (state.userRole === 'client') {
-        setActiveScreen('create-order');
-    } else {
-        setActiveScreen('add-service');
-    }
-}
-
-function setRole(role) {
-    state.userRole = role;
-    localStorage.setItem(STORAGE_KEYS.userRole, role);
-    applyRoleUI();
-}
-
-async function openContactModal(phone, title, kind) {
-    if (!requireAuth('contact')) return;
-
-    if (!await ensureUserPhone()) return;
-
-    uiState.contact.phone = String(phone || '').trim();
-    uiState.contact.title = String(title || '').trim();
-    uiState.contact.kind = String(kind || '').trim();
-
-    if (dom.contact.info) dom.contact.info.textContent = `Связь по поводу: "${uiState.contact.title}"`;
-    if (dom.contact.phoneHidden) dom.contact.phoneHidden.classList.remove('hidden');
-    if (dom.contact.phoneShown) dom.contact.phoneShown.classList.add('hidden');
-    if (dom.contact.phone) dom.contact.phone.textContent = '';
-
-    openModal(dom.modals.contact);
-}
-
-function closeContactModal() {
-    closeModal(dom.modals.contact);
-    uiState.contact.phone = null;
-    uiState.contact.title = null;
-    uiState.contact.kind = null;
-}
-
-async function handleFeedClick(e) {
-    const adminBtn = e.target.closest('button[data-action="admin-delete"]');
-    if (adminBtn) {
-        if (!isLoggedIn() || !state.session.isAdmin) {
-            alert('Недостаточно прав');
-
-            return;
-        }
-
-        const kind = adminBtn.dataset.kind;
-        const id = adminBtn.dataset.id;
-        if (!kind || !id) return;
-
-        if (kind === 'master') {
-            const idx = state.masters.findIndex((m) => String(m.id) === String(id));
-            if (idx >= 0) state.masters.splice(idx, 1);
-            persistMasters();
-            cloudDelete('masters', id);
-            renderFeeds();
-        } else if (kind === 'order') {
-            const idx = state.orders.findIndex((o) => String(o.id) === String(id));
-            if (idx >= 0) state.orders.splice(idx, 1);
-            persistOrders();
-            cloudDelete('orders', id);
-            renderFeeds();
-        }
-        return;
-    }
-
-    const btn = e.target.closest('button[data-action="contact"]');
-    if (!btn) return;
-    const kind = String(btn.dataset.kind || '');
-    if (kind === 'order') {
-        if (state.userRole !== 'master') {
-            alert('Откликаться на заказы может только мастер (переключите роль в профиле).');
-            return;
-        }
-        if (!await requireSubscription('Отклик на заказ')) return;
-
-        const id = String(btn.dataset.id || '');
-        const order = state.orders.find((o) => String(o.id) === id);
-        if (!order) {
-            alert('Заказ не найден');
-            return;
-        }
-
-        // Защита от дурака
-        if (normalizePhone(order.phone) && normalizePhone(order.phone) === normalizePhone(state.session.phone)) {
-            alert('Нельзя откликнуться на свой заказ');
-            return;
-        }
-
-        if (String(order.status || 'Активен') !== 'Активен' || order.assignedMasterPhone) {
-            alert('Этот заказ уже принят другим мастером');
-            return;
-        }
-
-        const ok = await openConfirm({
-            title: 'Принять заказ?',
-            text: 'После принятия заказ пропадёт из ленты для других мастеров и появится у вас во вкладке «Мои».',
-            okText: 'Принять',
-            cancelText: 'Отмена'
-        });
-        if (!ok) return;
-
-        const accepted = await acceptOrder(order.id);
-        if (!accepted) return;
-    }
-
-    if (kind === 'master') {
-        if (state.userRole !== 'client') {
-            alert('Откликаться на услуги может только клиент (переключите роль в профиле).');
-            return;
-        }
-        if (!await requireSubscription('Отклик на услугу мастера')) return;
-        if (!requireAuth('contact')) return;
-        if (!await ensureUserPhone()) return;
-
-        const masterId = String(btn.dataset.id || '');
-        const master = state.masters.find((m) => String(m.id) === masterId);
-        if (!master) {
-            alert('Услуга не найдена');
-            return;
-        }
-
-        const clientPhone = String(state.session.phone || '').trim();
-        const masterPhone = String(master.phone || '').trim();
-        if (!clientPhone || !masterPhone) return;
-
-        if (normalizePhone(clientPhone) === normalizePhone(masterPhone)) {
-            alert('Нельзя откликнуться на свою услугу');
-            return;
-        }
-
-        const deal = {
-            id: `d_${Date.now()}`,
-            serviceId: String(master.id),
-            serviceTitle: String(master.category || 'Услуга'),
-            serviceDesc: String(master.desc || ''),
-            priceFrom: Number(master.priceFrom) || 0,
-            masterPhone: normalizePhone(masterPhone),
-            masterName: String(master.name || ''),
-            clientPhone: normalizePhone(clientPhone),
-            clientName: String(state.session.name || ''),
-            status: 'Ожидает мастера',
-            createdAt: Date.now()
-        };
-
-        state.serviceDeals = Array.isArray(state.serviceDeals) ? state.serviceDeals : [];
-        state.serviceDeals.unshift(deal);
-        persistServiceDeals();
-        cloudUpsert('serviceDeals', deal);
-    }
-    await openContactModal(btn.dataset.phone, btn.dataset.title, kind);
-}
-
-async function cloudAcceptOrderTransaction(orderId, masterPhone) {
-    if (!isCloudReady()) return false;
-    try {
-        const ref = cloud.db.collection('orders').doc(String(orderId));
-        await cloud.db.runTransaction(async (tx) => {
-            const snap = await tx.get(ref);
-            if (!snap.exists) throw new Error('not_found');
-            const data = snap.data() || {};
-            const status = String(data.status || 'Активен');
-            if (status !== 'Активен') throw new Error('not_active');
-            if (data.assignedMasterPhone) throw new Error('already_taken');
-            tx.update(ref, {
-                status: 'Выполняется',
-                assignedMasterPhone: masterPhone
-            });
-        });
-        return true;
-    } catch (e) {
-        console.warn('cloudAcceptOrderTransaction failed', e);
-        return false;
-    }
-}
-
-async function acceptOrder(orderId) {
-    if (!requireAuth('my')) return false;
-    if (!await ensureUserPhone()) return false;
-
-    const id = String(orderId || '');
-    const order = state.orders.find((o) => String(o.id) === id);
-    if (!order) {
-        alert('Заказ не найден');
-        return false;
-    }
-
-    if (String(order.status || 'Активен') !== 'Активен' || order.assignedMasterPhone) {
-        alert('Этот заказ уже принят');
-        return false;
-    }
-
-    const masterPhone = String(state.session.phone || '').trim();
-    if (!masterPhone) return false;
-
-    // 1) Пытаемся принять через транзакцию в облаке (защита от гонок)
-    if (isCloudReady()) {
-        const ok = await cloudAcceptOrderTransaction(id, masterPhone);
-        if (!ok) {
-            alert('Не удалось принять заказ: возможно, его уже принял другой мастер. Обновите ленту.');
-            return false;
-        }
-    }
-
-    // 2) Обновляем локально
-    order.status = 'Выполняется';
-    order.assignedMasterPhone = masterPhone;
-    if (!Array.isArray(state.masterResponses)) state.masterResponses = [];
-    if (!state.masterResponses.includes(id)) state.masterResponses.push(id);
-    persistResponses();
-    persistOrders();
-
-    // 3) Если облака нет/не готово — пробуем обычный upsert (без транзакции)
-    if (!isCloudReady()) {
-        cloudUpsert('orders', order);
-    }
-
-    renderFeeds();
-    if (dom.screens && dom.screens.my && !dom.screens.my.classList.contains('hidden')) renderMy();
-    return true;
-}
-
-async function submitOrder() {
-    // 1. Сначала получаем текст из поля
-    const title = dom.inputs.orderTitle.value.trim();
-
-    // 2. Теперь проверяем его
-    if (!isClean(title)) {
-        alert("Ваше объявление содержит недопустимые слова и отклонено модерацией.");
-        return;
-    }
-
-    if (!requireAuth('create-order')) return;
-
-    if (!await ensureUserPhone()) return;
-
-    const cat = dom.inputs.orderCat.value;
-    const priceRaw = dom.inputs.orderPrice.value;
-    const address = dom.inputs.orderAddress.value.trim();
-    const district = (dom.inputs.orderDistrict && dom.inputs.orderDistrict.value.trim()) || state.location.district || '';
-
-    if (!ensureCleanField(title, 'Заголовок')) return;
-    if (!ensureCleanField(address, 'Адрес')) return;
-    if (!ensureCleanField(district, 'Район')) return;
-
-    const price = Number(priceRaw);
-    if (!Number.isFinite(price) || price <= 0) {
-        alert('Введите корректную цену');
-        return;
-    }
-
-    const order = {
-        id: `o_${Date.now()}`,
-        title,
-        cat,
-        price,
-        phone: state.session.phone,
-        author: state.session.name || 'Вы',
-        time: 'Только что',
-        address,
-        city: state.location.city || 'Красноярск',
-        district,
-        lat: state.location.lat,
-        lon: state.location.lon,
-        status: 'Активен',
-        assignedMasterPhone: null,
-        createdAt: Date.now()
-    };
-
-    state.orders.unshift(order);
-
-    persistOrders();
-    cloudUpsert('orders', order);
-
-    dom.forms['create-order'].reset();
-    state.activeFeed = 'orders';
-    setActiveScreen('home');
-    renderFeeds();
-}
-
-async function submitService() {
-    // 1. Сначала получаем описание
-    const desc = dom.inputs.serviceDesc.value.trim();
-
-    // 2. Теперь проверяем его
-    if (!isClean(desc)) {
-        alert("Описание содержит недопустимые слова. Пожалуйста, соблюдайте правила сервиса.");
-        return;
-    }
-
-    if (!requireAuth('add-service')) return;
-
-    if (!await ensureUserPhone()) return;
-    if (!await requireSubscription('Размещение услуги мастера')) return;
-
-    const category = dom.inputs.serviceCat.value;
-    const priceRaw = dom.inputs.servicePrice.value;
-    const address = dom.inputs.serviceAddress.value.trim();
-    const district = (dom.inputs.serviceDistrict && dom.inputs.serviceDistrict.value.trim()) || state.location.district || '';
-
-    if (!ensureCleanField(desc, 'Описание')) return;
-    if (!ensureCleanField(address, 'Адрес')) return;
-    if (!ensureCleanField(district, 'Район')) return;
-
-    if (!category || !desc || !priceRaw || !address) {
-        alert('Заполните все поля: категорию, описание, цену и район');
-        return;
-    }
-
-    const priceFrom = Number(priceRaw);
-    if (!Number.isFinite(priceFrom) || priceFrom <= 0) {
-        alert('Введите корректную цену');
-        return;
-    }
-
-    const master = {
-        id: `m_${Date.now()}`,
-        name: state.session.name || 'Вы',
-        category,
-        priceFrom,
-        phone: state.session.phone,
-        rating: 5.0,
-        ratingCount: 1,
-        photo: state.session.avatar || 'https://i.pravatar.cc/150?img=33',
-        desc,
-        address,
-        city: state.location.city || 'Красноярск',
-        district,
-        lat: state.location.lat,
-        lon: state.location.lon,
-        status: 'active',
-        createdAt: Date.now()
-    };
-
-    state.masters.unshift(master);
-
-    persistMasters();
-    cloudUpsert('masters', master);
-
-    dom.forms['add-service'].reset();
-    state.activeFeed = 'masters';
-    setActiveScreen('home');
-    renderFeeds();
-}
-
-// ==========================================
-// 5.5) MY SCREEN + DEAL FLOW
-// ==========================================
-
-function persistResponses() {
-    localStorage.setItem(STORAGE_KEYS.masterResponses, JSON.stringify(state.masterResponses));
-}
-
-function getMyOrdersAsClient() {
-    const key = getUserKey();
-    const sessionPhone = state.session && state.session.phone ? normalizePhone(state.session.phone) : null;
-    const keyPhone = key ? normalizePhone(key) : null;
-
-    return state.orders.filter((o) => {
-        const p = o && o.phone ? normalizePhone(o.phone) : null;
-        if (!p) return false;
-        if (sessionPhone && p === sessionPhone) return true;
-        if (keyPhone && p === keyPhone) return true;
-        return false;
-    });
-}
-
-function getMyServicesAsMaster() {
-    const my = normalizePhone(getUserKey());
-    return state.masters.filter((m) => normalizePhone(m.phone) === my);
-}
-
-function getMyRespondedOrdersAsMaster() {
-    const myPhone = state.session && state.session.phone ? normalizePhone(state.session.phone) : null;
-    return state.orders.filter((o) => {
-        if (!state.masterResponses.includes(o.id)) return false;
-        if (!myPhone) return false;
-        if (String(o.status || '') !== 'Выполняется') return false;
-        return normalizePhone(o.assignedMasterPhone) === myPhone;
-    });
-}
-
-function renderStatusBadge(status) {
-    const map = {
-        'Активен': 'bg-blue-50 text-blue-700',
-        'Выполняется': 'bg-yellow-50 text-yellow-700',
-        'Ожидает подтверждения': 'bg-purple-50 text-purple-700',
-        'Завершен': 'bg-green-50 text-green-700',
-        'Ожидает мастера': 'bg-purple-50 text-purple-700',
-        'Ожидает подтверждения клиента': 'bg-purple-50 text-purple-700',
-        'Отказан': 'bg-red-50 text-red-700',
-        'Отменен': 'bg-gray-100 text-gray-600'
-    };
-    const cls = map[status] || 'bg-gray-100 text-gray-600';
-    return `<span class="text-[10px] font-bold px-2 py-1 rounded-full ${cls}">${escapeHtml(status)}</span>`;
-}
-
-function renderMy() {
-    if (!dom.my || !dom.my.content) return;
-
-    dom.my.roleBadge.textContent = state.userRole === 'client' ? 'Клиент' : 'Мастер';
-    dom.my.roleBadge.className = `text-xs font-bold px-3 py-1 rounded-full ${state.userRole === 'client' ? 'bg-blue-50 text-blue-600' : 'bg-green-50 text-green-700'}`;
-
-    if (!isLoggedIn()) {
-        dom.my.content.innerHTML = `
-            <div class="col-span-full bg-white rounded-2xl border p-8 text-center">
-                <div class="text-3xl text-gray-300"><i class="fa-solid fa-lock"></i></div>
-                <div class="mt-3 font-bold text-gray-900">Войдите, чтобы увидеть раздел «Мои»</div>
-                <div class="mt-1 text-sm text-gray-500">Авторизуйтесь, чтобы продолжить</div>
-            </div>
-        `;
-        return;
-    }
-
-    if (state.userRole === 'client') {
-        const myOrders = getMyOrdersAsClient();
-        const myServiceDeals = (state.serviceDeals || []).filter((d) => normalizePhone(d.clientPhone) === normalizePhone(getUserKey()));
-        if (!myOrders.length) {
-            dom.my.content.innerHTML = `
-                <div class="col-span-full bg-white rounded-2xl border p-8 text-center">
-                    <div class="text-3xl text-gray-300"><i class="fa-solid fa-clipboard-list"></i></div>
-                    <div class="mt-3 font-bold text-gray-900">У вас пока нет заказов</div>
-                    <div class="mt-1 text-sm text-gray-500">Создайте заказ через кнопку «+»</div>
-                </div>
-            `;
-        }
-
-        const ordersBlock = myOrders.map((o) => {
-            const canConfirm = o.status === 'Ожидает подтверждения';
-            const canDelete = (state.session.isAdmin || normalizePhone(o.phone) === normalizePhone(getUserKey())) && String(o.status || 'Активен') === 'Активен';
-            const canCancelClient = String(o.status || '') === 'Выполняется' && Boolean(o.assignedMasterPhone);
-            return `
-                <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                    <div class="flex justify-between items-start gap-3">
-                        <div>
-                            <div class="text-xs text-gray-500 font-semibold">${escapeHtml(o.cat)}</div>
-                            <h3 class="font-bold text-gray-900 mt-1">${escapeHtml(o.title)}</h3>
-                        </div>
-                        <div class="text-right">
-                            ${renderStatusBadge(o.status)}
-                            <div class="mt-2 font-bold text-green-600">${formatPrice(o.price)} ₽</div>
-                        </div>
-                    </div>
-                    <div class="mt-3 text-xs text-gray-500 font-semibold"><i class="fa-solid fa-location-dot"></i> ${escapeHtml(o.address)}</div>
-                    ${canConfirm ? `<button type="button" data-action="deal-confirm" data-id="${escapeHtml(o.id)}" class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold">Работа завершена</button>` : ''}
-                    ${canCancelClient ? `<button type="button" data-action="deal-cancel-client" data-id="${escapeHtml(o.id)}" class="w-full mt-3 bg-yellow-50 text-yellow-800 py-3 rounded-2xl font-bold">Отказаться от услуги</button>` : ''}
-                    ${canDelete ? `<button type="button" data-action="order-delete" data-id="${escapeHtml(o.id)}" class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Удалить</button>` : ''}
-                </article>
-            `;
-        }).join('');
-
-        const dealsBlock = myServiceDeals.length ? myServiceDeals.map((d) => {
-            const st = String(d.status || '');
-            const canConfirm = st === 'Ожидает подтверждения клиента';
-            const canCancel = st === 'Ожидает мастера' || st === 'Выполняется';
-            const canDelete = st === 'Отказан' || st === 'Отменен' || st === 'Завершен';
-            return `
-                <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                    <div class="flex justify-between items-start gap-3">
-                        <div>
-                            <div class="text-xs text-gray-500 font-semibold">Отклик на мастера: ${escapeHtml(d.masterName || 'Мастер')}</div>
-                            <h3 class="font-bold text-gray-900 mt-1">${escapeHtml(d.serviceTitle || '')}</h3>
-                        </div>
-                        <div class="text-right">
-                            ${renderStatusBadge(st)}
-                            ${d.priceFrom ? `<div class="mt-2 font-bold text-green-600">от ${formatPrice(d.priceFrom)} ₽</div>` : ''}
-                        </div>
-                    </div>
-                    ${canConfirm ? `<button type="button" data-action="service-deal-confirm" data-id="${escapeHtml(d.id)}" class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold">Подтвердить завершение</button>` : ''}
-                    ${canCancel ? `<button type="button" data-action="service-deal-cancel-client" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-yellow-50 text-yellow-800 py-3 rounded-2xl font-bold">Отменить заявку</button>` : ''}
-                    ${canDelete ? `<button type="button" data-action="service-deal-delete" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Удалить из истории</button>` : ''}
-                </article>
-            `;
-        }).join('') : `
-            <div class="col-span-full bg-white rounded-2xl border p-8 text-center">
-                <div class="text-3xl text-gray-300"><i class="fa-solid fa-briefcase"></i></div>
-                <div class="mt-3 font-bold text-gray-900">Заявок на услуги пока нет</div>
-                <div class="mt-1 text-sm text-gray-500">Откликайтесь на услуги в ленте мастеров</div>
-            </div>
-        `;
-
-        dom.my.content.innerHTML = `
-            <div class="col-span-full font-bold text-gray-900">Мои заказы</div>
-            ${ordersBlock || ''}
-            <div class="col-span-full font-bold text-gray-900 mt-2">Мои заявки на услуги</div>
-            ${dealsBlock}
-        `;
-        return;
-    }
-
-    const responded = getMyRespondedOrdersAsMaster();
-    const services = getMyServicesAsMaster();
-    const myIncomingDeals = (state.serviceDeals || []).filter((d) => normalizePhone(d.masterPhone) === normalizePhone(getUserKey()));
-
-    const respondedBlock = responded.length ? responded.map((o) => {
-        const canFinish = o.status === 'Выполняется';
-        const canCancelMaster = canFinish && normalizePhone(o.assignedMasterPhone) === normalizePhone(state.session.phone);
-        return `
-            <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                <div class="flex justify-between items-start gap-3">
-                    <div>
-                        <div class="text-xs text-gray-500 font-semibold">${escapeHtml(o.cat)}</div>
-                        <h3 class="font-bold text-gray-900 mt-1">${escapeHtml(o.title)}</h3>
-                    </div>
-                    <div class="text-right">
-                        ${renderStatusBadge(o.status)}
-                        <div class="mt-2 font-bold text-green-600">${formatPrice(o.price)} ₽</div>
-                    </div>
-                </div>
-                <div class="mt-3 text-xs text-gray-500 font-semibold"><i class="fa-solid fa-location-dot"></i> ${escapeHtml(o.address)}</div>
-                ${canFinish ? `<button type="button" data-action="deal-finish" data-id="${escapeHtml(o.id)}" class="w-full mt-4 bg-green-600 text-white py-3 rounded-2xl font-bold">Работа завершена</button>` : ''}
-                ${canCancelMaster ? `<button type="button" data-action="deal-cancel-master" data-id="${escapeHtml(o.id)}" class="w-full mt-3 bg-yellow-50 text-yellow-800 py-3 rounded-2xl font-bold">Отказаться от выполнения</button>` : ''}
-            </article>
-        `;
-    }).join('') : `
-        <div class="col-span-full bg-white rounded-2xl border p-8 text-center">
-            <div class="text-3xl text-gray-300"><i class="fa-solid fa-handshake"></i></div>
-            <div class="mt-3 font-bold text-gray-900">Пока нет откликов</div>
-            <div class="mt-1 text-sm text-gray-500">Откликайтесь на заказы в ленте</div>
-        </div>
-    `;
-
-    const servicesBlock = services.length ? services.map((m) => {
-        return `
-            <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                <div>
-                    <h3 class="font-bold text-gray-900">${escapeHtml(m.category)}</h3>
-                    <div class="text-xs text-gray-500 mt-1"><i class="fa-solid fa-location-dot"></i> ${escapeHtml(m.address)}</div>
-                </div>
-                <div class="text-right">
-                    <div class="font-bold text-green-600">от ${formatPrice(m.priceFrom)} ₽</div>
-                    <button type="button" data-action="service-delete" data-id="${escapeHtml(m.id)}" class="mt-2 text-xs font-bold text-red-500 bg-red-50 px-3 py-2 rounded-full">Удалить</button>
-                </div>
-                <div class="mt-3 text-sm text-gray-600 line-clamp-2">${escapeHtml(m.desc)}</div>
-            </article>
-        `;
-    }).join('') : `
-        <div class="col-span-full bg-white rounded-2xl border p-8 text-center">
-            <div class="text-3xl text-gray-300"><i class="fa-solid fa-briefcase"></i></div>
-            <div class="mt-3 font-bold text-gray-900">У вас пока нет услуг</div>
-            <div class="mt-1 text-sm text-gray-500">Добавьте услугу через кнопку «+»</div>
-        </div>
-    `;
-
-    const dealsBlock = myIncomingDeals.length ? myIncomingDeals.map((d) => {
-        const st = String(d.status || '');
-        const canAccept = st === 'Ожидает мастера';
-        const canDecline = st === 'Ожидает мастера';
-        const canFinish = st === 'Выполняется';
-        return `
-            <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                <div class="flex justify-between items-start gap-3">
-                    <div>
-                        <div class="text-xs text-gray-500 font-semibold">Клиент: ${escapeHtml(d.clientName || 'Клиент')}</div>
-                        <h3 class="font-bold text-gray-900 mt-1">${escapeHtml(d.serviceTitle || '')}</h3>
-                    </div>
-                    <div class="text-right">
-                        ${renderStatusBadge(st)}
-                        ${d.priceFrom ? `<div class="mt-2 font-bold text-green-600">от ${formatPrice(d.priceFrom)} ₽</div>` : ''}
-                    </div>
-                </div>
-                ${st === 'Выполняется' ? `<div class="mt-3 text-xs text-gray-500 font-semibold">Сейчас выполняете работу для клиента</div>` : ''}
-                ${canAccept ? `<button type="button" data-action="service-deal-accept" data-id="${escapeHtml(d.id)}" class="w-full mt-4 bg-green-600 text-white py-3 rounded-2xl font-bold">Принять</button>` : ''}
-                ${canDecline ? `<button type="button" data-action="service-deal-decline" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Отказать</button>` : ''}
-                ${canFinish ? `<button type="button" data-action="service-deal-finish" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-blue-600 text-white py-3 rounded-2xl font-bold">Работа завершена</button>` : ''}
-            </article>
-        `;
-    }).join('') : `
-        <div class="col-span-full bg-white rounded-2xl border p-8 text-center">
-            <div class="text-3xl text-gray-300"><i class="fa-solid fa-inbox"></i></div>
-            <div class="mt-3 font-bold text-gray-900">Пока нет заявок</div>
-            <div class="mt-1 text-sm text-gray-500">Клиенты будут откликаться на ваши услуги из ленты</div>
-        </div>
-    `;
-
-    dom.my.content.innerHTML = `
-        <div class="col-span-full font-bold text-gray-900">Откликнулся на заказы</div>
-        ${respondedBlock}
-        <div class="col-span-full font-bold text-gray-900 mt-2">Заявки на мои услуги</div>
-        ${dealsBlock}
-        <div class="col-span-full font-bold text-gray-900 mt-2">Мои услуги</div>
-        ${servicesBlock}
-    `;
 }
 
 async function handleMyClick(e) {
@@ -2019,10 +1254,11 @@ async function handleMyClick(e) {
         const id = String(btnDealConfirmClient.dataset.id || '');
         const deal = (state.serviceDeals || []).find((d) => String(d.id) === id);
         if (!deal) return;
-        deal.status = 'Завершен';
-        persistServiceDeals();
-        cloudUpsert('serviceDeals', deal);
-        renderMy();
+        if (!deal.masterPhone) {
+            alert('Нет данных о мастере для оценки');
+            return;
+        }
+        openRatingModalForServiceDeal(deal.id, deal.masterPhone, deal.serviceTitle || 'Услуга');
         return;
     }
 
@@ -2065,8 +1301,21 @@ function openRatingModal(orderId, masterPhone, title) {
     state.rating.isOpen = true;
     state.rating.selectedStars = 0;
     state.rating.orderId = orderId;
+    state.rating.dealId = null;
     state.rating.masterPhone = masterPhone;
     dom.rating.title.textContent = `Заказ: ${title}`;
+    dom.rating.text.value = '';
+    updateRatingStarsUI();
+    openModal(dom.modals.rating);
+}
+
+function openRatingModalForServiceDeal(dealId, masterPhone, title) {
+    state.rating.isOpen = true;
+    state.rating.selectedStars = 0;
+    state.rating.orderId = null;
+    state.rating.dealId = dealId;
+    state.rating.masterPhone = masterPhone;
+    dom.rating.title.textContent = `Услуга: ${title}`;
     dom.rating.text.value = '';
     updateRatingStarsUI();
     openModal(dom.modals.rating);
@@ -2076,6 +1325,7 @@ function closeRatingModal() {
     state.rating.isOpen = false;
     state.rating.selectedStars = 0;
     state.rating.orderId = null;
+    state.rating.dealId = null;
     state.rating.masterPhone = null;
     closeModal(dom.modals.rating);
 }
@@ -2095,12 +1345,7 @@ function submitRating() {
         return;
     }
 
-    const order = state.orders.find((o) => o.id === state.rating.orderId);
-    if (!order) {
-        closeRatingModal();
-        return;
-    }
-
+    const reviewText = dom.rating && dom.rating.text ? String(dom.rating.text.value || '').trim() : '';
     const phone = state.rating.masterPhone;
     const mastersToUpdate = state.masters.filter((m) => m.phone === phone);
     mastersToUpdate.forEach((m) => {
@@ -2109,21 +1354,39 @@ function submitRating() {
         const next = (old * count + stars) / (count + 1);
         m.rating = Math.round(next * 10) / 10;
         m.ratingCount = count + 1;
+        if (reviewText) {
+            m.lastReviewText = reviewText;
+            m.lastReviewStars = stars;
+            m.lastReviewAt = Date.now();
+        }
         cloudUpsert('masters', m);
     });
 
-    order.status = 'Завершен';
-    persistMasters();
-    persistOrders();
-    cloudUpsert('orders', order);
+    const dealId = state.rating.dealId;
+    if (dealId) {
+        const deal = (state.serviceDeals || []).find((d) => String(d.id) === String(dealId));
+        if (deal) {
+            deal.status = 'Завершен';
+            persistMasters();
+            persistServiceDeals();
+            cloudUpsert('serviceDeals', deal);
+        }
+    } else {
+        const order = state.orders.find((o) => o.id === state.rating.orderId);
+        if (!order) {
+            closeRatingModal();
+            return;
+        }
+        order.status = 'Завершен';
+        persistMasters();
+        persistOrders();
+        cloudUpsert('orders', order);
+    }
+
     closeRatingModal();
     renderFeeds();
     renderMy();
 }
-
-// ==========================================
-// 5.7) GEOLOCATION
-// ==========================================
 
 async function reverseGeocode(lat, lon) {
     const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`;
@@ -2404,6 +1667,9 @@ dom.nav.my.addEventListener('click', () => {
     if (!requireAuth('my')) return;
     setActiveScreen('my');
 });
+if (dom.nav.notifications) {
+    dom.nav.notifications.addEventListener('click', () => setActiveScreen('notifications'));
+}
 dom.nav.profile.addEventListener('click', () => {
     renderProfile();
     setActiveScreen('profile');
@@ -2532,34 +1798,13 @@ if (dom.profile.detectLocation) dom.profile.detectLocation.addEventListener('cli
 
 // --- Уведомления (колокольчик) ---
 if (dom.header.notifications) {
-    dom.header.notifications.addEventListener('click', async () => {
-        const items = Array.isArray(state.notifications) ? state.notifications.slice().reverse() : [];
-        const lines = items
-            .map((n) => String(n && n.text ? n.text : '').trim())
-            .filter(Boolean);
-        const text = lines.length
-            ? lines.map((t, i) => `${i + 1}) ${t}`).join('\n')
-            : 'Новых уведомлений нет.';
+    dom.header.notifications.addEventListener('click', () => setActiveScreen('notifications'));
+}
 
-        const ok = await openDialog({
-            title: 'Уведомления',
-            text,
-            okText: 'Закрыть',
-            cancelText: 'Очистить'
-        });
-
-        // 'Очистить'
-        if (!ok) {
-            clearNotifications();
-            return;
-        }
-
-        // После просмотра — очищаем только счётчик непрочитанных (историю оставляем)
-        if ((Number(state.notificationsUnread) || 0) > 0) {
-            state.notificationsUnread = 0;
-            persistNotificationsUnread();
-            renderNotificationsBadge();
-        }
+if (dom.notifications && dom.notifications.clear) {
+    dom.notifications.clear.addEventListener('click', () => {
+        clearNotifications();
+        renderNotificationsScreen();
     });
 }
 
