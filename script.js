@@ -97,7 +97,14 @@ let cloud = {
 
 function initCloud() {
     if (typeof firebase === 'undefined') {
-        console.warn('Firebase SDK not loaded: cloud sync disabled');
+        if (!cloud._initRetries) cloud._initRetries = 0;
+        if (cloud._initRetries < 30) {
+            if (cloud._initRetries === 0) console.warn('Firebase SDK not loaded yet: retrying initCloud...');
+            cloud._initRetries += 1;
+            setTimeout(initCloud, 250);
+        } else {
+            console.warn('Firebase SDK not loaded: cloud sync disabled');
+        }
         return;
     }
     try {
@@ -106,6 +113,8 @@ function initCloud() {
         }
         cloud.db = firebase.firestore();
         cloud.enabled = true;
+
+        console.log('Cloud ready: Firestore initialized');
 
         cloud.db.collection('_meta').doc('ping').set({ t: Date.now() }, { merge: true })
             .then(() => console.log('Firestore ping: OK'))
