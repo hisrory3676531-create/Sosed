@@ -234,7 +234,7 @@ function startCloudSubscriptions() {
                                 kind: 'order_accepted',
                                 orderId: String(o.id),
                                 title: String(o.title || ''),
-                                text: `Ваш заказ принят: ${String(o.title || '')}`
+                                text: `✅ Заказ принят: ${String(o.title || '')}`
                             });
                         } else if (nextStatus === 'Активен') {
                             pushNotification({
@@ -242,7 +242,7 @@ function startCloudSubscriptions() {
                                 kind: 'order_back_to_feed',
                                 orderId: String(o.id),
                                 title: String(o.title || ''),
-                                text: `Заказ снова в ленте: ${String(o.title || '')}`
+                                text: `❌ От заказа отказались. Он снова в ленте: ${String(o.title || '')}`
                             });
                         }
                     }
@@ -254,9 +254,28 @@ function startCloudSubscriptions() {
                                 kind: 'order_canceled',
                                 orderId: String(o.id),
                                 title: String(o.title || ''),
-                                text: `Заказ возвращён в ленту: ${String(o.title || '')}`
+                                text: `❌ Клиент отказался. Заказ снова в ленте: ${String(o.title || '')}`
                             });
                         }
+                    }
+                }
+
+                // Если я мастер: чистим список "Откликнулся" — оставляем только реально закреплённые за мной заказы в работе.
+                if (state.userRole === 'master' && myPhone && Array.isArray(state.masterResponses)) {
+                    const nextResponses = state.masterResponses
+                        .map((id) => String(id))
+                        .filter((id) => {
+                            const o = nextById[id];
+                            if (!o) return false;
+                            if (String(o.status || '') !== 'Выполняется') return false;
+                            return normalizePhone(o.assignedMasterPhone) === myPhone;
+                        });
+
+                    const prev = JSON.stringify(state.masterResponses.map((x) => String(x)));
+                    const now = JSON.stringify(nextResponses);
+                    if (prev !== now) {
+                        state.masterResponses = nextResponses;
+                        persistResponses();
                     }
                 }
 
@@ -1469,7 +1488,13 @@ function getMyServicesAsMaster() {
 }
 
 function getMyRespondedOrdersAsMaster() {
-    return state.orders.filter((o) => state.masterResponses.includes(o.id));
+    const myPhone = state.session && state.session.phone ? normalizePhone(state.session.phone) : null;
+    return state.orders.filter((o) => {
+        if (!state.masterResponses.includes(o.id)) return false;
+        if (!myPhone) return false;
+        if (String(o.status || '') !== 'Выполняется') return false;
+        return normalizePhone(o.assignedMasterPhone) === myPhone;
+    });
 }
 
 function renderStatusBadge(status) {
@@ -2156,8 +2181,11 @@ if (dom.profile.detectLocation) dom.profile.detectLocation.addEventListener('cli
 if (dom.header.notifications) {
     dom.header.notifications.addEventListener('click', async () => {
         const items = Array.isArray(state.notifications) ? state.notifications.slice().reverse() : [];
-        const text = items.length
-            ? items.map((n) => String(n && n.text ? n.text : '')).filter(Boolean).join('\n')
+        const lines = items
+            .map((n) => String(n && n.text ? n.text : '').trim())
+            .filter(Boolean);
+        const text = lines.length
+            ? lines.map((t, i) => `${i + 1}) ${t}`).join('\n')
             : 'Новых уведомлений нет.';
 
         await openConfirm({ title: 'Уведомления', text, okText: 'OK', cancelText: 'Закрыть' });
