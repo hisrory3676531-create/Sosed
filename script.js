@@ -1040,7 +1040,17 @@ function persistResponses() {
 }
 
 function getMyOrdersAsClient() {
-    return state.orders.filter((o) => o.phone === getUserKey());
+    const key = getUserKey();
+    const sessionPhone = state.session && state.session.phone ? normalizePhone(state.session.phone) : null;
+    const keyPhone = key ? normalizePhone(key) : null;
+
+    return state.orders.filter((o) => {
+        const p = o && o.phone ? normalizePhone(o.phone) : null;
+        if (!p) return false;
+        if (sessionPhone && p === sessionPhone) return true;
+        if (keyPhone && p === keyPhone) return true;
+        return false;
+    });
 }
 
 function getMyServicesAsMaster() {
@@ -1094,6 +1104,7 @@ function renderMy() {
 
         dom.my.content.innerHTML = myOrders.map((o) => {
             const canConfirm = o.status === 'Ожидает подтверждения';
+            const canDelete = state.session.isAdmin || normalizePhone(o.phone) === normalizePhone(getUserKey());
             return `
                 <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
                     <div class="flex justify-between items-start gap-3">
@@ -1108,6 +1119,7 @@ function renderMy() {
                     </div>
                     <div class="mt-3 text-xs text-gray-500 font-semibold"><i class="fa-solid fa-location-dot"></i> ${escapeHtml(o.address)}</div>
                     ${canConfirm ? `<button type="button" data-action="deal-confirm" data-id="${escapeHtml(o.id)}" class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold">Работа завершена</button>` : ''}
+                    ${canDelete ? `<button type="button" data-action="order-delete" data-id="${escapeHtml(o.id)}" class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Удалить</button>` : ''}
                 </article>
             `;
         }).join('');
@@ -1209,6 +1221,18 @@ function handleMyClick(e) {
         if (idx >= 0) state.masters.splice(idx, 1);
         persistMasters();
         cloudDelete('masters', id);
+        renderMy();
+        renderFeeds();
+        return;
+    }
+
+    const btnOrderDelete = e.target.closest('button[data-action="order-delete"]');
+    if (btnOrderDelete) {
+        const id = btnOrderDelete.dataset.id;
+        const idx = state.orders.findIndex((o) => o.id === id && (state.session.isAdmin || normalizePhone(o.phone) === normalizePhone(getUserKey())));
+        if (idx >= 0) state.orders.splice(idx, 1);
+        persistOrders();
+        cloudDelete('orders', id);
         renderMy();
         renderFeeds();
     }
