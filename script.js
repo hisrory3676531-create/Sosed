@@ -372,14 +372,73 @@ const dom = {
         cancel: document.getElementById('btn-dialog-cancel')
     }
 };
-
-// ==========================================
 // 3) HELPERS
 // ==========================================
 
 const FORBIDDEN_WORDS = ['шлюха', 'проститутка', 'эскорт', 'вызов девушки', 'секс', 'интим', 'нарко', 'гашиш','меф','спайс','гашиш','нарка', 'мяумяу', 'гашиш'
 , 'вызов девушки', 'девушка по вызову', 'шмаль', 'кокс', 'какоин', 'какаин', 'кокоин' , 'наркота', 'дурь'
 ];
+
+function normalizeForModeration(input) {
+    let s = String(input || '').toLowerCase();
+    if (!s) return '';
+
+    s = s.replace(/ё/g, 'е');
+
+    // Схожая латиница -> кириллица (частые обходы)
+    const map = {
+        a: 'а', b: 'в', c: 'с', e: 'е', h: 'н', k: 'к', m: 'м', o: 'о', p: 'р', t: 'т', x: 'х', y: 'у',
+        i: 'и', j: 'ј'
+    };
+    s = s.replace(/[abcehkmoptxyij]/g, (ch) => map[ch] || ch);
+
+    // Убираем пробелы/пунктуацию/разделители, чтобы ловить "ш л ю х а" и т.п.
+    s = s.replace(/[\s\u00A0_\-.,:;|/\\'"`()\[\]{}<>!?@#$%^&*+=~]/g, '');
+
+    // Схлопываем повторяющиеся буквы: "шлюююха" -> "шлюха"
+    s = s.replace(/(.)\1{2,}/g, '$1');
+
+    return s;
+}
+
+const FORBIDDEN_REGEX = [
+    /шлюх/,
+    /проститут/,
+    /эскорт/,
+    /интим/,
+    /секс/,
+    /отсос/,
+    /наркот/,
+    /нарко/,
+    /меф/,
+    /спайс/,
+    /гашиш/,
+    /шмал/,
+    /кокс/,
+    /кокаин/,
+    /дурь/
+];
+
+function hasForbiddenWords(text) {
+    const normalized = normalizeForModeration(text);
+    if (!normalized) return false;
+
+    for (const re of FORBIDDEN_REGEX) {
+        if (re.test(normalized)) return true;
+    }
+
+    return FORBIDDEN_WORDS.some((w) => {
+        const ww = normalizeForModeration(w);
+        return ww && normalized.includes(ww);
+    });
+}
+
+function ensureCleanField(value, fieldLabel) {
+    if (!value) return true;
+    if (!hasForbiddenWords(value)) return true;
+    alert(`${fieldLabel} содержит недопустимые слова. Исправьте текст и попробуйте снова.`);
+    return false;
+}
 
 const uiState = {
     dialog: {
@@ -453,10 +512,7 @@ function openPrompt({ title, text, placeholder, value, type, okText, cancelText 
 }
 
 function isClean(text) {
-    const lowerText = text.toLowerCase();
-    // Проверяем, содержит ли текст хотя бы одно запрещенное слово
-    const found = FORBIDDEN_WORDS.some(word => lowerText.includes(word));
-    return !found;
+    return !hasForbiddenWords(text);
 }
 
 function openModal(el) {
@@ -935,6 +991,11 @@ async function submitOrder() {
     const cat = dom.inputs.orderCat.value;
     const priceRaw = dom.inputs.orderPrice.value;
     const address = dom.inputs.orderAddress.value.trim();
+    const district = (dom.inputs.orderDistrict && dom.inputs.orderDistrict.value.trim()) || state.location.district || '';
+
+    if (!ensureCleanField(title, 'Заголовок')) return;
+    if (!ensureCleanField(address, 'Адрес')) return;
+    if (!ensureCleanField(district, 'Район')) return;
 
     const price = Number(priceRaw);
     if (!Number.isFinite(price) || price <= 0) {
@@ -952,7 +1013,7 @@ async function submitOrder() {
         time: 'Только что',
         address,
         city: state.location.city || 'Красноярск',
-        district: (dom.inputs.orderDistrict && dom.inputs.orderDistrict.value.trim()) || state.location.district || '',
+        district,
         lat: state.location.lat,
         lon: state.location.lon,
         status: 'Активен',
@@ -988,7 +1049,12 @@ async function submitService() {
 
     const category = dom.inputs.serviceCat.value;
     const priceRaw = dom.inputs.servicePrice.value;
-    const address = dom.inputs.serviceAddress.value.trim();;
+    const address = dom.inputs.serviceAddress.value.trim();
+    const district = (dom.inputs.serviceDistrict && dom.inputs.serviceDistrict.value.trim()) || state.location.district || '';
+
+    if (!ensureCleanField(desc, 'Описание')) return;
+    if (!ensureCleanField(address, 'Адрес')) return;
+    if (!ensureCleanField(district, 'Район')) return;
 
     if (!category || !desc || !priceRaw || !address) {
         alert('Заполните все поля: категорию, описание, цену и район');
@@ -1013,7 +1079,7 @@ async function submitService() {
         desc,
         address,
         city: state.location.city || 'Красноярск',
-        district: (dom.inputs.serviceDistrict && dom.inputs.serviceDistrict.value.trim()) || state.location.district || '',
+        district,
         lat: state.location.lat,
         lon: state.location.lon,
         status: 'active',
@@ -1441,6 +1507,8 @@ async function authViaSocial(platform) {
         return;
     }
 
+    if (!ensureCleanField(name, 'Имя')) return;
+
     let phone = null;
     const wantPhone = await openConfirm({
         title: platformName,
@@ -1525,14 +1593,17 @@ function saveProfileFromForm() {
     }
 
     const name = dom.profile.editName ? dom.profile.editName.value.trim() : '';
-    const phoneRaw = dom.profile.editPhone ? dom.profile.editPhone.value.trim() : '';
 
     if (!name) {
         alert('Укажите имя');
         return;
     }
 
+    if (!ensureCleanField(name, 'Имя')) return;
+
     let phone = null;
+    const phoneRaw = dom.profile.editPhone ? dom.profile.editPhone.value.trim() : '';
+
     if (phoneRaw) {
         if (!isValidPhone(phoneRaw)) {
             alert('Введите корректный номер телефона');
@@ -1632,7 +1703,9 @@ if (dom.profile.subscribe) {
 
 if (dom.profile.district) {
     dom.profile.district.addEventListener('input', () => {
-        state.location.district = dom.profile.district.value.trim();
+        const v = dom.profile.district.value.trim();
+        if (!ensureCleanField(v, 'Район')) return;
+        state.location.district = v;
         localStorage.setItem(STORAGE_KEYS.userDistrict, state.location.district);
         renderLocationUI();
         renderFeeds();
