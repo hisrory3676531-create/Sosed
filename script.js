@@ -2188,9 +2188,20 @@ if (dom.header.notifications) {
             ? lines.map((t, i) => `${i + 1}) ${t}`).join('\n')
             : 'Новых уведомлений нет.';
 
-        await openConfirm({ title: 'Уведомления', text, okText: 'OK', cancelText: 'Закрыть' });
+        const ok = await openDialog({
+            title: 'Уведомления',
+            text,
+            okText: 'Закрыть',
+            cancelText: 'Очистить'
+        });
 
-        // После просмотра — очищаем счётчик непрочитанных (историю оставляем)
+        // 'Очистить'
+        if (!ok) {
+            clearNotifications();
+            return;
+        }
+
+        // После просмотра — очищаем только счётчик непрочитанных (историю оставляем)
         if ((Number(state.notificationsUnread) || 0) > 0) {
             state.notificationsUnread = 0;
             persistNotificationsUnread();
