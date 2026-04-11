@@ -133,6 +133,23 @@ function initCloud() {
         }
         return;
     }
+
+    if (typeof firebase.firestore !== 'function') {
+        if (!cloud._fsRetries) cloud._fsRetries = 0;
+        if (!cloud._sdkInjected) {
+            cloud._sdkInjected = true;
+            ensureFirebaseSdkLoaded();
+        }
+        if (cloud._fsRetries < 30) {
+            if (cloud._fsRetries === 0) console.warn('Firestore SDK not loaded yet: retrying initCloud...');
+            cloud._fsRetries += 1;
+            setTimeout(initCloud, 250);
+        } else {
+            console.warn('Firestore SDK not loaded: cloud sync disabled');
+        }
+        return;
+    }
+
     try {
         if (!firebase.apps || !firebase.apps.length) {
             firebase.initializeApp(FIREBASE_CONFIG);
