@@ -169,6 +169,8 @@ function initCloud() {
 
         console.log('Cloud ready: Firestore initialized');
 
+        startCloudSubscriptions();
+
         cloud.db.collection('_meta').doc('ping').set({ t: Date.now() }, { merge: true })
             .then(() => console.log('Firestore ping: OK'))
             .catch((e) => console.error('Firestore ping: FAILED', e));
