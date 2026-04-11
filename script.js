@@ -95,9 +95,35 @@ let cloud = {
     unsubMasters: null
 };
 
+function ensureFirebaseSdkLoaded() {
+    const appUrl = 'https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js';
+    const fsUrl = 'https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js';
+
+    const hasApp = Boolean(document.querySelector(`script[src="${appUrl}"]`));
+    const hasFs = Boolean(document.querySelector(`script[src="${fsUrl}"]`));
+    if (hasApp && hasFs) return;
+
+    if (!hasApp) {
+        const s = document.createElement('script');
+        s.src = appUrl;
+        s.async = true;
+        document.head.appendChild(s);
+    }
+    if (!hasFs) {
+        const s = document.createElement('script');
+        s.src = fsUrl;
+        s.async = true;
+        document.head.appendChild(s);
+    }
+}
+
 function initCloud() {
     if (typeof firebase === 'undefined') {
         if (!cloud._initRetries) cloud._initRetries = 0;
+        if (!cloud._sdkInjected) {
+            cloud._sdkInjected = true;
+            ensureFirebaseSdkLoaded();
+        }
         if (cloud._initRetries < 30) {
             if (cloud._initRetries === 0) console.warn('Firebase SDK not loaded yet: retrying initCloud...');
             cloud._initRetries += 1;
