@@ -96,13 +96,20 @@ let cloud = {
 };
 
 function initCloud() {
-    if (typeof firebase === 'undefined') return;
+    if (typeof firebase === 'undefined') {
+        console.warn('Firebase SDK not loaded: cloud sync disabled');
+        return;
+    }
     try {
         if (!firebase.apps || !firebase.apps.length) {
             firebase.initializeApp(FIREBASE_CONFIG);
         }
         cloud.db = firebase.firestore();
         cloud.enabled = true;
+
+        cloud.db.collection('_meta').doc('ping').set({ t: Date.now() }, { merge: true })
+            .then(() => console.log('Firestore ping: OK'))
+            .catch((e) => console.error('Firestore ping: FAILED', e));
     } catch (e) {
         console.error('Firebase init failed', e);
         cloud.enabled = false;
@@ -148,7 +155,14 @@ function startCloudSubscriptions() {
 }
 
 async function cloudUpsert(kind, item) {
-    if (!isCloudReady() || !item || !item.id) return;
+    if (!isCloudReady()) {
+        console.warn('cloudUpsert skipped: cloud is not ready', { kind, hasDb: Boolean(cloud.db), enabled: cloud.enabled });
+        return;
+    }
+    if (!item || !item.id) {
+        console.warn('cloudUpsert skipped: missing item or id', { kind, item });
+        return;
+    }
     const createdAt = Number(item.createdAt) || Date.now();
     try {
         await cloud.db.collection(kind).doc(String(item.id)).set({ ...item, createdAt }, { merge: true });
@@ -158,7 +172,14 @@ async function cloudUpsert(kind, item) {
 }
 
 async function cloudDelete(kind, id) {
-    if (!isCloudReady() || !id) return;
+    if (!isCloudReady()) {
+        console.warn('cloudDelete skipped: cloud is not ready', { kind, id, hasDb: Boolean(cloud.db), enabled: cloud.enabled });
+        return;
+    }
+    if (!id) {
+        console.warn('cloudDelete skipped: missing id', { kind, id });
+        return;
+    }
     try {
         await cloud.db.collection(kind).doc(String(id)).delete();
     } catch (e) {
@@ -584,10 +605,22 @@ function getNearbyFirstSort(a, b) {
     return Number(bNear) - Number(aNear);
 }
 
+const CHIP_TO_CATEGORIES = {
+    moroz: ['Запуск авто в мороз', 'Помощь в мороз', 'Отогрев'],
+    electro: ['Электрика'],
+    water: ['Сантехника'],
+    build: ['Сборка мебели', 'Слесарь', 'Установщик'],
+    loader: ['Грузчик'],
+    nanny: ['Няня'],
+    pets: ['Выгул собак'],
+    it: ['IT-помощь']
+};
+
 function passesChipFilter(item, keyField) {
     const chip = state.activeChip;
     if (!chip || chip === 'all') return true;
     const allowed = CHIP_TO_CATEGORIES[chip];
+
     if (!allowed || !allowed.length) return true;
     const v = String(item[keyField] || '').toLowerCase();
     return allowed.some((c) => v.includes(String(c).toLowerCase()));
@@ -738,10 +771,6 @@ function applyRoleUI() {
     dom.nav.plus.classList.toggle('bg-green-600', !isClient);
 }
 
-// ==========================================
-// 5) ACTIONS (обработчики)
-// ==========================================
-
 function requireAuth(nextAction) {
     if (isLoggedIn()) return true;
     state.pendingAfterAuth = nextAction || null;
@@ -837,6 +866,8 @@ async function submitOrder() {
 
     if (!requireAuth('create-order')) return;
 
+    if (!await ensureUserPhone()) return;
+
     const cat = dom.inputs.orderCat.value;
     const priceRaw = dom.inputs.orderPrice.value;
     const address = dom.inputs.orderAddress.value.trim();
@@ -852,7 +883,7 @@ async function submitOrder() {
         title,
         cat,
         price,
-        phone: getUserKey(),
+        phone: state.session.phone,
         author: state.session.name || 'Вы',
         time: 'Только что',
         address,
@@ -887,6 +918,8 @@ async function submitService() {
     }
 
     if (!requireAuth('add-service')) return;
+
+    if (!await ensureUserPhone()) return;
     if (!await requireSubscription('Размещение услуги мастера')) return;
 
     const category = dom.inputs.serviceCat.value;
@@ -909,7 +942,7 @@ async function submitService() {
         name: state.session.name || 'Вы',
         category,
         priceFrom,
-        phone: getUserKey(),
+        phone: state.session.phone,
         rating: 5.0,
         ratingCount: 1,
         photo: state.session.avatar || 'https://i.pravatar.cc/150?img=33',
