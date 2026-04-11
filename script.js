@@ -194,9 +194,50 @@ function startCloudSubscriptions() {
     cloud.unsubOrders = cloud.db
         .collection('orders')
         .onSnapshot((snap) => {
-            state.orders = snap.docs
+            const next = snap.docs
                 .map((d) => ({ id: d.id, ...d.data() }))
                 .sort((a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0));
+
+            // Уведомления по смене статуса для текущего пользователя (если он залогинен)
+            try {
+                const prevById = uiState.ordersById || {};
+                const nextById = {};
+
+                const myPhone = state.session && state.session.phone ? normalizePhone(state.session.phone) : null;
+                for (const o of next) {
+                    nextById[String(o.id)] = o;
+                    if (!myPhone) continue;
+
+                    const prev = prevById[String(o.id)];
+                    if (!prev) continue;
+                    const prevStatus = String(prev.status || 'Активен');
+                    const nextStatus = String(o.status || 'Активен');
+                    if (prevStatus === nextStatus) continue;
+
+                    const isMyClientOrder = normalizePhone(o.phone) === myPhone;
+                    const isMyAssigned = normalizePhone(o.assignedMasterPhone) === myPhone;
+
+                    if (isMyClientOrder) {
+                        if (nextStatus === 'Выполняется') {
+                            openConfirm({ title: 'Заказ принят', text: 'Мастер принял ваш заказ. Статус: «Выполняется».', okText: 'OK', cancelText: 'Закрыть' });
+                        } else if (nextStatus === 'Активен') {
+                            openConfirm({ title: 'Заказ снова активен', text: 'Заказ снова появился в ленте (мастер отказался или вы отменили).', okText: 'OK', cancelText: 'Закрыть' });
+                        }
+                    }
+
+                    if (isMyAssigned) {
+                        if (nextStatus === 'Активен') {
+                            openConfirm({ title: 'Заказ возвращён в ленту', text: 'Заказ снова активен и доступен другим мастерам.', okText: 'OK', cancelText: 'Закрыть' });
+                        }
+                    }
+                }
+
+                uiState.ordersById = nextById;
+            } catch (e) {
+                console.warn('order status notify failed', e);
+            }
+
+            state.orders = next;
             persistOrders();
             renderFeeds();
             if (dom.screens && dom.screens.my && !dom.screens.my.classList.contains('hidden')) renderMy();
@@ -448,7 +489,8 @@ const uiState = {
         phone: null,
         title: null,
         kind: null
-    }
+    },
+    ordersById: {}
 };
 
 function openDialog({ title, text, okText, cancelText, input }) {
@@ -800,6 +842,7 @@ function renderMastersFeed() {
 
 function renderOrdersFeed() {
     const filtered = state.orders
+        .filter((o) => String(o.status || 'Активен') === 'Активен' && !o.assignedMasterPhone)
         .filter((o) => passesChipFilter(o, 'cat'))
         .slice()
         .sort(getNearbyFirstSort);
@@ -942,6 +985,7 @@ async function handleFeedClick(e) {
     if (adminBtn) {
         if (!isLoggedIn() || !state.session.isAdmin) {
             alert('Недостаточно прав');
+
             return;
         }
 
@@ -969,9 +1013,111 @@ async function handleFeedClick(e) {
     if (!btn) return;
     const kind = String(btn.dataset.kind || '');
     if (kind === 'order') {
+        if (state.userRole !== 'master') {
+            alert('Откликаться на заказы может только мастер (переключите роль в профиле).');
+            return;
+        }
         if (!await requireSubscription('Отклик на заказ')) return;
+
+        const id = String(btn.dataset.id || '');
+        const order = state.orders.find((o) => String(o.id) === id);
+        if (!order) {
+            alert('Заказ не найден');
+            return;
+        }
+
+        // Защита от дурака
+        if (normalizePhone(order.phone) && normalizePhone(order.phone) === normalizePhone(state.session.phone)) {
+            alert('Нельзя откликнуться на свой заказ');
+            return;
+        }
+
+        if (String(order.status || 'Активен') !== 'Активен' || order.assignedMasterPhone) {
+            alert('Этот заказ уже принят другим мастером');
+            return;
+        }
+
+        const ok = await openConfirm({
+            title: 'Принять заказ?',
+            text: 'После принятия заказ пропадёт из ленты для других мастеров и появится у вас во вкладке «Мои».',
+            okText: 'Принять',
+            cancelText: 'Отмена'
+        });
+        if (!ok) return;
+
+        const accepted = await acceptOrder(order.id);
+        if (!accepted) return;
     }
     await openContactModal(btn.dataset.phone, btn.dataset.title, kind);
+}
+
+async function cloudAcceptOrderTransaction(orderId, masterPhone) {
+    if (!isCloudReady()) return false;
+    try {
+        const ref = cloud.db.collection('orders').doc(String(orderId));
+        await cloud.db.runTransaction(async (tx) => {
+            const snap = await tx.get(ref);
+            if (!snap.exists) throw new Error('not_found');
+            const data = snap.data() || {};
+            const status = String(data.status || 'Активен');
+            if (status !== 'Активен') throw new Error('not_active');
+            if (data.assignedMasterPhone) throw new Error('already_taken');
+            tx.update(ref, {
+                status: 'Выполняется',
+                assignedMasterPhone: masterPhone
+            });
+        });
+        return true;
+    } catch (e) {
+        console.warn('cloudAcceptOrderTransaction failed', e);
+        return false;
+    }
+}
+
+async function acceptOrder(orderId) {
+    if (!requireAuth('my')) return false;
+    if (!await ensureUserPhone()) return false;
+
+    const id = String(orderId || '');
+    const order = state.orders.find((o) => String(o.id) === id);
+    if (!order) {
+        alert('Заказ не найден');
+        return false;
+    }
+
+    if (String(order.status || 'Активен') !== 'Активен' || order.assignedMasterPhone) {
+        alert('Этот заказ уже принят');
+        return false;
+    }
+
+    const masterPhone = String(state.session.phone || '').trim();
+    if (!masterPhone) return false;
+
+    // 1) Пытаемся принять через транзакцию в облаке (защита от гонок)
+    if (isCloudReady()) {
+        const ok = await cloudAcceptOrderTransaction(id, masterPhone);
+        if (!ok) {
+            alert('Не удалось принять заказ: возможно, его уже принял другой мастер. Обновите ленту.');
+            return false;
+        }
+    }
+
+    // 2) Обновляем локально
+    order.status = 'Выполняется';
+    order.assignedMasterPhone = masterPhone;
+    if (!Array.isArray(state.masterResponses)) state.masterResponses = [];
+    if (!state.masterResponses.includes(id)) state.masterResponses.push(id);
+    persistResponses();
+    persistOrders();
+
+    // 3) Если облака нет/не готово — пробуем обычный upsert (без транзакции)
+    if (!isCloudReady()) {
+        cloudUpsert('orders', order);
+    }
+
+    renderFeeds();
+    if (dom.screens && dom.screens.my && !dom.screens.my.classList.contains('hidden')) renderMy();
+    return true;
 }
 
 async function submitOrder() {
@@ -1171,6 +1317,7 @@ function renderMy() {
         dom.my.content.innerHTML = myOrders.map((o) => {
             const canConfirm = o.status === 'Ожидает подтверждения';
             const canDelete = state.session.isAdmin || normalizePhone(o.phone) === normalizePhone(getUserKey());
+            const canCancelClient = String(o.status || '') === 'Выполняется' && Boolean(o.assignedMasterPhone);
             return `
                 <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
                     <div class="flex justify-between items-start gap-3">
@@ -1185,6 +1332,7 @@ function renderMy() {
                     </div>
                     <div class="mt-3 text-xs text-gray-500 font-semibold"><i class="fa-solid fa-location-dot"></i> ${escapeHtml(o.address)}</div>
                     ${canConfirm ? `<button type="button" data-action="deal-confirm" data-id="${escapeHtml(o.id)}" class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold">Работа завершена</button>` : ''}
+                    ${canCancelClient ? `<button type="button" data-action="deal-cancel-client" data-id="${escapeHtml(o.id)}" class="w-full mt-3 bg-yellow-50 text-yellow-800 py-3 rounded-2xl font-bold">Отказаться от услуги</button>` : ''}
                     ${canDelete ? `<button type="button" data-action="order-delete" data-id="${escapeHtml(o.id)}" class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Удалить</button>` : ''}
                 </article>
             `;
@@ -1197,6 +1345,7 @@ function renderMy() {
 
     const respondedBlock = responded.length ? responded.map((o) => {
         const canFinish = o.status === 'Выполняется';
+        const canCancelMaster = canFinish && normalizePhone(o.assignedMasterPhone) === normalizePhone(state.session.phone);
         return `
             <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
                 <div class="flex justify-between items-start gap-3">
@@ -1211,6 +1360,7 @@ function renderMy() {
                 </div>
                 <div class="mt-3 text-xs text-gray-500 font-semibold"><i class="fa-solid fa-location-dot"></i> ${escapeHtml(o.address)}</div>
                 ${canFinish ? `<button type="button" data-action="deal-finish" data-id="${escapeHtml(o.id)}" class="w-full mt-4 bg-green-600 text-white py-3 rounded-2xl font-bold">Работа завершена</button>` : ''}
+                ${canCancelMaster ? `<button type="button" data-action="deal-cancel-master" data-id="${escapeHtml(o.id)}" class="w-full mt-3 bg-yellow-50 text-yellow-800 py-3 rounded-2xl font-bold">Отказаться от выполнения</button>` : ''}
             </article>
         `;
     }).join('') : `
@@ -1224,15 +1374,13 @@ function renderMy() {
     const servicesBlock = services.length ? services.map((m) => {
         return `
             <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                <div class="flex justify-between items-start gap-3">
-                    <div>
-                        <h3 class="font-bold text-gray-900">${escapeHtml(m.category)}</h3>
-                        <div class="text-xs text-gray-500 mt-1"><i class="fa-solid fa-location-dot"></i> ${escapeHtml(m.address)}</div>
-                    </div>
-                    <div class="text-right">
-                        <div class="font-bold text-green-600">от ${formatPrice(m.priceFrom)} ₽</div>
-                        <button type="button" data-action="service-delete" data-id="${escapeHtml(m.id)}" class="mt-2 text-xs font-bold text-red-500 bg-red-50 px-3 py-2 rounded-full">Удалить</button>
-                    </div>
+                <div>
+                    <h3 class="font-bold text-gray-900">${escapeHtml(m.category)}</h3>
+                    <div class="text-xs text-gray-500 mt-1"><i class="fa-solid fa-location-dot"></i> ${escapeHtml(m.address)}</div>
+                </div>
+                <div class="text-right">
+                    <div class="font-bold text-green-600">от ${formatPrice(m.priceFrom)} ₽</div>
+                    <button type="button" data-action="service-delete" data-id="${escapeHtml(m.id)}" class="mt-2 text-xs font-bold text-red-500 bg-red-50 px-3 py-2 rounded-full">Удалить</button>
                 </div>
                 <div class="mt-3 text-sm text-gray-600 line-clamp-2">${escapeHtml(m.desc)}</div>
             </article>
@@ -1253,7 +1401,7 @@ function renderMy() {
     `;
 }
 
-function handleMyClick(e) {
+async function handleMyClick(e) {
     const btnFinish = e.target.closest('button[data-action="deal-finish"]');
     if (btnFinish) {
         const id = btnFinish.dataset.id;
@@ -1277,6 +1425,34 @@ function handleMyClick(e) {
             return;
         }
         openRatingModal(order.id, order.assignedMasterPhone, order.title);
+        return;
+    }
+
+    const btnCancelMaster = e.target.closest('button[data-action="deal-cancel-master"]');
+    if (btnCancelMaster) {
+        const id = String(btnCancelMaster.dataset.id || '');
+        const ok = await openConfirm({
+            title: 'Отказаться от выполнения?',
+            text: 'Заказ вернётся в ленту и станет доступен другим мастерам.',
+            okText: 'Отказаться',
+            cancelText: 'Отмена'
+        });
+        if (!ok) return;
+        await cancelOrder(id, 'master');
+        return;
+    }
+
+    const btnCancelClient = e.target.closest('button[data-action="deal-cancel-client"]');
+    if (btnCancelClient) {
+        const id = String(btnCancelClient.dataset.id || '');
+        const ok = await openConfirm({
+            title: 'Отказаться от услуги?',
+            text: 'Заказ снова появится в ленте, чтобы другие мастера могли откликнуться.',
+            okText: 'Вернуть в ленту',
+            cancelText: 'Отмена'
+        });
+        if (!ok) return;
+        await cancelOrder(id, 'client');
         return;
     }
 
