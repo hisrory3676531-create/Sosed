@@ -226,6 +226,7 @@ function startCloudSubscriptions() {
 
                     const isMyClientOrder = normalizePhone(o.phone) === myPhone;
                     const isMyAssigned = normalizePhone(o.assignedMasterPhone) === myPhone;
+                    const wasMyAssigned = normalizePhone(prev.assignedMasterPhone) === myPhone;
 
                     if (isMyClientOrder) {
                         if (nextStatus === 'Выполняется') {
@@ -247,7 +248,9 @@ function startCloudSubscriptions() {
                         }
                     }
 
-                    if (isMyAssigned) {
+                    // Для мастера: при отмене клиентом assignedMasterPhone сбрасывается в null,
+                    // поэтому ориентируемся на предыдущее закрепление за мной.
+                    if (wasMyAssigned || isMyAssigned) {
                         if (nextStatus === 'Активен') {
                             pushNotification({
                                 ts: Date.now(),
