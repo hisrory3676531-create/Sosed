@@ -18,7 +18,8 @@ const STORAGE_KEYS = {
     userLon: 'userLon',
     masters: 'masters',
     orders: 'orders',
-    masterResponses: 'masterResponses'
+    masterResponses: 'masterResponses',
+    notificationsUnread: 'notificationsUnread'
 };
 
 const state = {
@@ -32,6 +33,7 @@ const state = {
         subActive: localStorage.getItem(STORAGE_KEYS.userSubActive) === '1',
         subUntil: Number(localStorage.getItem(STORAGE_KEYS.userSubUntil)) || null
     },
+    notificationsUnread: Number(localStorage.getItem(STORAGE_KEYS.notificationsUnread)) || 0,
     userRole: localStorage.getItem(STORAGE_KEYS.userRole) || 'client',
     adminPhone: '+79509822033',
     adminCode: '1218',
@@ -219,15 +221,15 @@ function startCloudSubscriptions() {
 
                     if (isMyClientOrder) {
                         if (nextStatus === 'Выполняется') {
-                            openConfirm({ title: 'Заказ принят', text: 'Мастер принял ваш заказ. Статус: «Выполняется».', okText: 'OK', cancelText: 'Закрыть' });
+                            pushNotification();
                         } else if (nextStatus === 'Активен') {
-                            openConfirm({ title: 'Заказ снова активен', text: 'Заказ снова появился в ленте (мастер отказался или вы отменили).', okText: 'OK', cancelText: 'Закрыть' });
+                            pushNotification();
                         }
                     }
 
                     if (isMyAssigned) {
                         if (nextStatus === 'Активен') {
-                            openConfirm({ title: 'Заказ возвращён в ленту', text: 'Заказ снова активен и доступен другим мастерам.', okText: 'OK', cancelText: 'Закрыть' });
+                            pushNotification();
                         }
                     }
                 }
@@ -281,6 +283,7 @@ async function cloudDelete(kind, id) {
         console.warn('cloudDelete skipped: cloud is not ready', { kind, id, hasDb: Boolean(cloud.db), enabled: cloud.enabled });
         return;
     }
+
     if (!id) {
         console.warn('cloudDelete skipped: missing id', { kind, id });
         return;
@@ -290,6 +293,109 @@ async function cloudDelete(kind, id) {
     } catch (e) {
         console.error(`cloudDelete(${kind}) failed`, e);
     }
+}
+
+async function cloudCancelOrderTransaction(orderId, actorRole, actorPhone) {
+    if (!isCloudReady()) return false;
+    try {
+        const ref = cloud.db.collection('orders').doc(String(orderId));
+        await cloud.db.runTransaction(async (tx) => {
+            const snap = await tx.get(ref);
+            if (!snap.exists) throw new Error('not_found');
+            const data = snap.data() || {};
+
+            const status = String(data.status || 'Активен');
+            if (status !== 'Выполняется') throw new Error('not_in_progress');
+
+            const orderClientPhone = normalizePhone(data.phone);
+            const assigned = normalizePhone(data.assignedMasterPhone);
+            const actor = normalizePhone(actorPhone);
+
+            if (actorRole === 'master') {
+                if (!assigned || assigned !== actor) throw new Error('not_assigned_to_you');
+            } else if (actorRole === 'client') {
+                if (!orderClientPhone || orderClientPhone !== actor) throw new Error('not_your_order');
+            } else {
+                throw new Error('bad_actor');
+            }
+
+            tx.update(ref, {
+                status: 'Активен',
+                assignedMasterPhone: null,
+                createdAt: Date.now(),
+                time: 'Только что'
+            });
+        });
+        return true;
+    } catch (e) {
+        console.warn('cloudCancelOrderTransaction failed', e);
+        return false;
+    }
+}
+
+async function cancelOrder(orderId, actorRole) {
+    if (!requireAuth('my')) return false;
+    if (!await ensureUserPhone()) return false;
+
+    const id = String(orderId || '');
+    const order = state.orders.find((o) => String(o.id) === id);
+    if (!order) {
+        alert('Заказ не найден');
+        return false;
+    }
+
+    const actorPhone = String(state.session.phone || '').trim();
+    if (!actorPhone) return false;
+
+    if (String(order.status || 'Активен') !== 'Выполняется') {
+        alert('Отказ возможен только для заказов в статусе «Выполняется»');
+        return false;
+    }
+
+    if (actorRole === 'master') {
+        if (normalizePhone(order.assignedMasterPhone) !== normalizePhone(actorPhone)) {
+            alert('Этот заказ закреплён за другим мастером');
+            return false;
+        }
+    } else if (actorRole === 'client') {
+        if (normalizePhone(order.phone) !== normalizePhone(actorPhone)) {
+            alert('Это не ваш заказ');
+            return false;
+        }
+    } else {
+        alert('Ошибка отмены');
+        return false;
+    }
+
+    if (isCloudReady()) {
+        const ok = await cloudCancelOrderTransaction(id, actorRole, actorPhone);
+        if (!ok) {
+            alert('Не удалось отменить: возможно статус уже изменился. Обновите ленту.');
+            return false;
+        }
+    }
+
+    order.status = 'Активен';
+    order.assignedMasterPhone = null;
+    order.createdAt = Date.now();
+    order.time = 'Только что';
+    persistOrders();
+
+    if (actorRole === 'master') {
+        const idx = Array.isArray(state.masterResponses) ? state.masterResponses.indexOf(id) : -1;
+        if (idx >= 0) {
+            state.masterResponses.splice(idx, 1);
+            persistResponses();
+        }
+    }
+
+    if (!isCloudReady()) {
+        cloudUpsert('orders', order);
+    }
+
+    renderFeeds();
+    if (dom.screens && dom.screens.my && !dom.screens.my.classList.contains('hidden')) renderMy();
+    return true;
 }
 
 // ==========================================
@@ -321,7 +427,9 @@ const dom = {
     },
     header: {
         locationText: document.getElementById('header-location'),
-        detectLocation: document.getElementById('btn-detect-location')
+        detectLocation: document.getElementById('btn-detect-location'),
+        notifications: document.getElementById('btn-notifications'),
+        notifBadge: document.getElementById('notif-badge')
     },
     profile: {
         name: document.getElementById('profile-name'),
@@ -413,6 +521,8 @@ const dom = {
         cancel: document.getElementById('btn-dialog-cancel')
     }
 };
+
+// ==========================================
 // 3) HELPERS
 // ==========================================
 
@@ -553,13 +663,61 @@ function openPrompt({ title, text, placeholder, value, type, okText, cancelText 
     });
 }
 
-function isClean(text) {
-    return !hasForbiddenWords(text);
+function persistNotificationsUnread() {
+    localStorage.setItem(STORAGE_KEYS.notificationsUnread, String(Number(state.notificationsUnread) || 0));
 }
 
-function openModal(el) {
-    el.classList.remove('hidden');
-    el.classList.add('flex');
+function renderNotificationsBadge() {
+    const n = Number(state.notificationsUnread) || 0;
+    if (!dom || !dom.header || !dom.header.notifBadge) return;
+    if (n > 0) {
+        dom.header.notifBadge.textContent = String(n);
+        dom.header.notifBadge.classList.remove('hidden');
+    } else {
+        dom.header.notifBadge.classList.add('hidden');
+    }
+}
+
+function playBellSound() {
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(880, ctx.currentTime);
+        o.frequency.exponentialRampToValueAtTime(660, ctx.currentTime + 0.12);
+        g.gain.setValueAtTime(0.0001, ctx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
+        o.connect(g);
+        g.connect(ctx.destination);
+        o.start();
+        o.stop(ctx.currentTime + 0.2);
+        o.onended = () => {
+            try { ctx.close(); } catch {}
+        };
+    } catch (e) {
+        console.warn('playBellSound failed', e);
+    }
+}
+
+function pushNotification() {
+    state.notificationsUnread = (Number(state.notificationsUnread) || 0) + 1;
+    persistNotificationsUnread();
+    renderNotificationsBadge();
+    playBellSound();
+}
+
+function clearNotifications() {
+    state.notificationsUnread = 0;
+    persistNotificationsUnread();
+    renderNotificationsBadge();
+}
+
+function isClean(text) {
+    return !hasForbiddenWords(text);
 }
 
 function closeModal(el) {
@@ -1953,6 +2111,18 @@ if (dom.contact.copyPhone) {
 if (dom.header.detectLocation) dom.header.detectLocation.addEventListener('click', detectLocation);
 if (dom.profile.detectLocation) dom.profile.detectLocation.addEventListener('click', detectLocation);
 
+// --- Уведомления (колокольчик) ---
+if (dom.header.notifications) {
+    dom.header.notifications.addEventListener('click', async () => {
+        if ((Number(state.notificationsUnread) || 0) > 0) {
+            clearNotifications();
+            await openConfirm({ title: 'Уведомления', text: 'Уведомления прочитаны.', okText: 'OK', cancelText: 'Закрыть' });
+        } else {
+            await openConfirm({ title: 'Уведомления', text: 'Новых уведомлений нет.', okText: 'OK', cancelText: 'Закрыть' });
+        }
+    });
+}
+
 // --- Dialog modal ---
 if (dom.dialog && dom.dialog.ok) {
     dom.dialog.ok.addEventListener('click', () => {
@@ -2021,6 +2191,7 @@ initCloud();
 renderProfile();
 applyRoleUI();
 renderLocationUI();
+renderNotificationsBadge();
 renderFeeds();
 setActiveScreen('home');
 
