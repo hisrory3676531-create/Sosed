@@ -1325,12 +1325,13 @@ function renderMy() {
     dom.my.content.innerHTML = blocks.length ? blocks.join('') : `<div class="col-span-full text-center text-gray-400 py-10">Пока пусто</div>`;
 }
 
-function handleMyClick(e) {
+async function handleMyClick(e) {
     const btnFinish = e.target.closest('button[data-action="deal-finish"]');
     if (btnFinish) {
         const id = btnFinish.dataset.id;
         const order = state.orders.find((o) => o.id === id);
         if (!order) return;
+
         order.status = 'Ожидает подтверждения';
         persistOrders();
         cloudUpsert('orders', order);
