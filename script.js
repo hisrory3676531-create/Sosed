@@ -1150,65 +1150,6 @@ function renderProfile() {
     applyRoleUI();
 }
 
-function setActiveScreen(screen) {
-    Object.values(dom.screens).forEach((el) => el.classList.add('hidden'));
-    dom.screens[screen].classList.remove('hidden');
-
-    document.querySelectorAll('.nav-btn').forEach((btn) => {
-        btn.classList.remove('text-blue-600');
-        btn.classList.add('text-gray-400');
-        if (btn.dataset.target === screen) btn.classList.add('text-blue-600');
-    });
-
-    if (screen === 'home') renderFeeds();
-    if (screen === 'my') renderMy();
-    if (screen === 'notifications') renderNotificationsScreen();
-}
-
-function setActiveFeed(feed) {
-    state.activeFeed = feed;
-    const isMasters = feed === 'masters';
-    dom.tabs.masters.className = `flex-1 py-2 rounded-xl text-sm font-bold ${isMasters ? 'tab-active' : 'tab-inactive'}`;
-    dom.tabs.orders.className = `flex-1 py-2 rounded-xl text-sm font-bold ${!isMasters ? 'tab-active' : 'tab-inactive'}`;
-    dom.feeds.masters.classList.toggle('hidden', !isMasters);
-    dom.feeds.orders.classList.toggle('hidden', isMasters);
-}
-
-function renderNotificationsScreen() {
-    if (!dom.notifications || !dom.notifications.list) return;
-
-    const items = Array.isArray(state.notifications) ? state.notifications.slice().reverse() : [];
-    if (!items.length) {
-        dom.notifications.list.innerHTML = `
-            <div class="bg-white rounded-2xl border p-8 text-center">
-                <div class="text-3xl text-gray-300"><i class="fa-solid fa-bell"></i></div>
-                <div class="mt-3 font-bold text-gray-900">Новых уведомлений нет</div>
-                <div class="mt-1 text-sm text-gray-500">Здесь будут события по заказам и услугам</div>
-            </div>
-        `;
-    } else {
-        dom.notifications.list.innerHTML = items.map((n) => {
-            const text = String(n && n.text ? n.text : '').trim();
-            const title = String(n && n.title ? n.title : '').trim();
-            const ts = Number(n && n.ts ? n.ts : 0);
-            const time = ts ? new Date(ts).toLocaleString() : '';
-            return `
-                <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                    ${title ? `<div class="text-xs text-gray-500 font-semibold">${escapeHtml(title)}</div>` : ''}
-                    <div class="font-semibold text-gray-900">${escapeHtml(text)}</div>
-                    ${time ? `<div class="mt-2 text-[11px] text-gray-400 font-semibold">${escapeHtml(time)}</div>` : ''}
-                </article>
-            `;
-        }).join('');
-    }
-
-    if ((Number(state.notificationsUnread) || 0) > 0) {
-        state.notificationsUnread = 0;
-        persistNotificationsUnread();
-        renderNotificationsBadge();
-    }
-}
-
 function handlePlusClick() {
     if (!requireAuth('plus')) return;
     if (state.userRole === 'master') setActiveScreen('add-service');
@@ -1260,7 +1201,10 @@ function renderMastersFeed() {
                     </button>
                 ` : ''}
                 ${canAdminDelete ? `
-                    <button type="button" data-action="service-delete" data-id="${escapeHtml(m.id)}" class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Удалить объявление</button>
+                    <button type="button" data-action="delete" data-kind="master" data-id="${escapeHtml(m.id)}"
+                        class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">
+                        Удалить
+                    </button>
                 ` : ''}
             </article>
         `;
@@ -1281,8 +1225,10 @@ function renderOrdersFeed() {
         const title = String(o.title || 'Заказ');
         const cat = String(o.cat || '');
         const price = o.price ? `${formatPrice(o.price)} ₽` : '';
+
         const addr = String(o.address || '');
         const canContact = state.userRole === 'master';
+        const canAdminDelete = Boolean(state.session && state.session.isAdmin);
         return `
             <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
                 <div class="font-bold text-gray-900">${escapeHtml(title)}</div>
@@ -1295,14 +1241,15 @@ function renderOrdersFeed() {
                         Откликнуться
                     </button>
                 ` : ''}
+                ${canAdminDelete ? `
+                    <button type="button" data-action="delete" data-kind="order" data-id="${escapeHtml(o.id)}"
+                        class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">
+                        Удалить
+                    </button>
+                ` : ''}
             </article>
         `;
     }).join('');
-}
-
-function renderFeeds() {
-    renderMastersFeed();
-    renderOrdersFeed();
 }
 
 function renderStatusBadge(status) {
@@ -1329,112 +1276,440 @@ function renderMy() {
     const myPhone = state.session && state.session.phone ? normalizePhone(state.session.phone) : null;
     const blocks = [];
 
-    if (state.userRole === 'client') {
-        const myOrders = (state.orders || []).filter((o) => myPhone && normalizePhone(o.phone) === myPhone);
-        const myDeals = (state.serviceDeals || []).filter((d) => myPhone && normalizePhone(d.clientPhone) === myPhone);
+    const section = (title, itemsHtml) => {
+        if (!itemsHtml || !itemsHtml.length) return;
+        blocks.push(`
+            <div class="col-span-full">
+                <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">${escapeHtml(title)}</div>
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    ${itemsHtml.join('')}
+                </div>
+            </div>
+        `);
+    };
 
-        blocks.push(...myOrders.map((o) => {
-            const st = String(o.status || 'Активен').trim();
-            const canCancel = st === 'Выполняется';
-            const canConfirm = st.startsWith('Ожидает подтверждения');
-            const canDelete = st === 'Активен';
-            return `
-                <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                    <div class="flex items-center justify-between gap-2">
-                        <div class="font-bold">${escapeHtml(o.title || 'Заказ')}</div>
-                        ${renderStatusBadge(st)}
-                    </div>
-                    ${o.address ? `<div class="text-sm text-gray-600 mt-2 line-clamp-2">${escapeHtml(o.address)}</div>` : ''}
-                    ${canConfirm ? `<button type="button" data-action="deal-confirm" data-id="${escapeHtml(o.id)}" class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold">Подтвердить завершение</button>` : ''}
-                    ${canCancel ? `<button type="button" data-action="deal-cancel-client" data-id="${escapeHtml(o.id)}" class="w-full mt-3 bg-yellow-50 text-yellow-800 py-3 rounded-2xl font-bold">Отменить выполнение</button>` : ''}
-                    ${canDelete ? `<button type="button" data-action="order-delete" data-id="${escapeHtml(o.id)}" class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Удалить</button>` : ''}
-                </article>
-            `;
-        }));
+    const isInProgressOrder = (st) => st === 'Выполняется' || st.startsWith('Ожидает подтверждения');
 
-        blocks.push(...myDeals.map((d) => {
-            const st = String(d.status || '').trim();
-            const canConfirm = st.startsWith('Ожидает подтверждения');
-            const canCancel = st === 'Ожидает мастера';
-            const canDelete = st === 'Отказан' || st === 'Отменен' || st === 'Завершен';
-            return `
-                <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                    <div class="flex items-center justify-between gap-2">
-                        <div class="font-bold">${escapeHtml(d.serviceTitle || 'Услуга')}</div>
-                        ${renderStatusBadge(st)}
-                    </div>
-                    ${d.masterName ? `<div class="text-sm text-gray-600 mt-2">Мастер: <b>${escapeHtml(d.masterName)}</b></div>` : ''}
-                    ${canConfirm ? `<button type="button" data-action="service-deal-confirm" data-id="${escapeHtml(d.id)}" class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold">Подтвердить завершение</button>` : ''}
-                    ${canCancel ? `<button type="button" data-action="service-deal-cancel-client" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-yellow-50 text-yellow-800 py-3 rounded-2xl font-bold">Отменить заявку</button>` : ''}
-                    ${canDelete ? `<button type="button" data-action="service-deal-delete" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Удалить из истории</button>` : ''}
-                </article>
-            `;
-        }));
-    } else {
-        const myOrders = (state.orders || []).filter((o) => myPhone && normalizePhone(o.assignedMasterPhone) === myPhone);
-        const incomingDeals = (state.serviceDeals || []).filter((d) => myPhone && normalizePhone(d.masterPhone) === myPhone);
+    // --- Мои (как клиент) ---
+    const myClientOrders = (state.orders || []).filter((o) => myPhone && normalizePhone(o.phone) === myPhone);
+    const myClientDeals = (state.serviceDeals || []).filter((d) => myPhone && normalizePhone(d.clientPhone) === myPhone);
 
-        const isAdmin = Boolean(state.session && state.session.isAdmin);
-        const myServices = (state.masters || []).filter((m) => {
-            if (!m) return false;
-            if (isAdmin) return true;
-            if (!myPhone) return false;
-            return normalizePhone(m.phone) === myPhone;
-        });
+    const clientOrdersActive = [];
+    const clientOrdersInProgress = [];
+    const clientOrdersDone = [];
 
-        blocks.push(...myServices.map((m) => {
-            const title = String(m.title || m.name || 'Мастер');
-            const desc = String(m.desc || m.description || '').trim();
-            const cat = String(m.cat || m.category || '');
-            const priceFrom = m.priceFrom || m.price || '';
-            return `
-                <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                    <div class="font-bold text-gray-900">${escapeHtml(title)}</div>
-                    ${cat ? `<div class="text-xs text-gray-500 mt-1">${escapeHtml(cat)}</div>` : ''}
-                    ${desc ? `<div class="text-sm text-gray-600 mt-2 line-clamp-2">${escapeHtml(desc)}</div>` : ''}
-                    ${priceFrom ? `<div class="mt-2 font-bold text-green-600">от ${escapeHtml(formatPrice(priceFrom))} ₽</div>` : ''}
-                    <button type="button" data-action="service-delete" data-id="${escapeHtml(m.id)}" class="w-full mt-4 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Удалить объявление</button>
-                </article>
-            `;
-        }));
-
-        blocks.push(...myOrders.map((o) => {
-            const st = String(o.status || '').trim();
-            const canFinish = st === 'Выполняется';
-            const canCancel = st === 'Выполняется';
-            return `
-                <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                    <div class="flex items-center justify-between gap-2">
-                        <div class="font-bold">${escapeHtml(o.title || 'Заказ')}</div>
-                        ${renderStatusBadge(st)}
-                    </div>
-                    ${canFinish ? `<button type="button" data-action="deal-finish" data-id="${escapeHtml(o.id)}" class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold">Отметить выполненным</button>` : ''}
-                    ${canCancel ? `<button type="button" data-action="deal-cancel-master" data-id="${escapeHtml(o.id)}" class="w-full mt-3 bg-yellow-50 text-yellow-800 py-3 rounded-2xl font-bold">Отказаться</button>` : ''}
-                </article>
-            `;
-        }));
-
-        blocks.push(...incomingDeals.map((d) => {
-            const st = String(d.status || '').trim();
-            const canAccept = st === 'Ожидает мастера';
-            const canDecline = st === 'Ожидает мастера';
-            const canFinish = st === 'Выполняется';
-            return `
-                <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                    <div class="flex items-center justify-between gap-2">
-                        <div class="font-bold">${escapeHtml(d.serviceTitle || 'Услуга')}</div>
-                        ${renderStatusBadge(st)}
-                    </div>
-                    ${d.clientName ? `<div class="text-sm text-gray-600 mt-2">Клиент: <b>${escapeHtml(d.clientName)}</b></div>` : ''}
-                    ${canAccept ? `<button type="button" data-action="service-deal-accept" data-id="${escapeHtml(d.id)}" class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold">Принять</button>` : ''}
-                    ${canDecline ? `<button type="button" data-action="service-deal-decline" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Отказать</button>` : ''}
-                    ${canFinish ? `<button type="button" data-action="service-deal-finish" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-green-50 text-green-700 py-3 rounded-2xl font-bold">Завершить</button>` : ''}
-                </article>
-            `;
-        }));
+    for (const o of myClientOrders) {
+        const st = String(o && o.status ? o.status : 'Активен').trim();
+        const canCancel = st === 'Выполняется';
+        const canConfirm = st.startsWith('Ожидает подтверждения');
+        const canDelete = !isInProgressOrder(st);
+        const card = `
+            <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                <div class="flex items-center justify-between gap-2">
+                    <div class="font-bold">${escapeHtml(o.title || 'Заказ')}</div>
+                    ${renderStatusBadge(st)}
+                </div>
+                ${o.address ? `<div class="text-sm text-gray-600 mt-2 line-clamp-2">${escapeHtml(o.address)}</div>` : ''}
+                ${canConfirm ? `<button type="button" data-action="deal-confirm" data-id="${escapeHtml(o.id)}" class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold">Подтвердить завершение</button>` : ''}
+                ${canCancel ? `<button type="button" data-action="deal-cancel-client" data-id="${escapeHtml(o.id)}" class="w-full mt-3 bg-yellow-50 text-yellow-800 py-3 rounded-2xl font-bold">Отменить выполнение</button>` : ''}
+                ${canDelete ? `<button type="button" data-action="order-delete" data-id="${escapeHtml(o.id)}" class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Удалить</button>` : ''}
+            </article>
+        `;
+        if (st === 'Активен') clientOrdersActive.push(card);
+        else if (isInProgressOrder(st)) clientOrdersInProgress.push(card);
+        else clientOrdersDone.push(card);
     }
 
+    const clientDealsWaiting = [];
+    const clientDealsInProgress = [];
+    const clientDealsDone = [];
+
+    for (const d of myClientDeals) {
+        const st = String(d.status || '').trim();
+        const canConfirm = st.startsWith('Ожидает подтверждения');
+        const canCancel = st === 'Ожидает мастера';
+        const canDelete = st === 'Отказан' || st === 'Отменен' || st === 'Завершен';
+        const card = `
+            <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                <div class="flex items-center justify-between gap-2">
+                    <div class="font-bold">${escapeHtml(d.serviceTitle || 'Услуга')}</div>
+                    ${renderStatusBadge(st)}
+                </div>
+                ${d.masterName ? `<div class="text-sm text-gray-600 mt-2">Мастер: <b>${escapeHtml(d.masterName)}</b></div>` : ''}
+                ${canConfirm ? `<button type="button" data-action="service-deal-confirm" data-id="${escapeHtml(d.id)}" class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold">Подтвердить завершение</button>` : ''}
+                ${canCancel ? `<button type="button" data-action="service-deal-cancel-client" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-yellow-50 text-yellow-800 py-3 rounded-2xl font-bold">Отменить заявку</button>` : ''}
+                ${canDelete ? `<button type="button" data-action="service-deal-delete" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Удалить из истории</button>` : ''}
+            </article>
+        `;
+        if (st === 'Ожидает мастера') clientDealsWaiting.push(card);
+        else if (st === 'Выполняется' || st.startsWith('Ожидает подтверждения')) clientDealsInProgress.push(card);
+        else clientDealsDone.push(card);
+    }
+
+    section('Мои как клиент · Заказы · Активные', clientOrdersActive);
+    section('Мои как клиент · Заказы · В работе', clientOrdersInProgress);
+    section('Мои как клиент · Заказы · Завершенные', clientOrdersDone);
+
+    section('Мои как клиент · Заявки на услуги · Ожидают мастера', clientDealsWaiting);
+    section('Мои как клиент · Заявки на услуги · В работе', clientDealsInProgress);
+    section('Мои как клиент · Заявки на услуги · Завершенные', clientDealsDone);
+
+    // --- Мои (как мастер) ---
+    const myPublishedServices = (state.masters || []).filter((m) => myPhone && normalizePhone(m.phone) === myPhone);
+    const myAssignedOrders = (state.orders || []).filter((o) => myPhone && normalizePhone(o.assignedMasterPhone) === myPhone);
+    const incomingDeals = (state.serviceDeals || []).filter((d) => myPhone && normalizePhone(d.masterPhone) === myPhone);
+
+    const masterServices = myPublishedServices.map((m) => {
+        const title = String(m.title || m.name || 'Моя услуга');
+        const desc = String(m.desc || m.description || '').trim();
+        const cat = String(m.cat || m.category || '');
+        const priceFrom = m.priceFrom || m.price || '';
+        return `
+            <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                <div class="font-bold text-gray-900">${escapeHtml(title)}</div>
+                ${cat ? `<div class="text-xs text-gray-500 mt-1">${escapeHtml(cat)}</div>` : ''}
+                ${desc ? `<div class="text-sm text-gray-600 mt-2 line-clamp-2">${escapeHtml(desc)}</div>` : ''}
+                ${priceFrom ? `<div class="mt-2 font-bold text-green-600">от ${escapeHtml(formatPrice(priceFrom))} ₽</div>` : ''}
+                <button type="button" data-action="service-delete" data-id="${escapeHtml(m.id)}" class="w-full mt-4 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Удалить</button>
+            </article>
+        `;
+    });
+
+    const masterOrdersInProgress = [];
+    const masterOrdersDone = [];
+    for (const o of myAssignedOrders) {
+        const st = String(o.status || '').trim();
+        const canFinish = st === 'Выполняется';
+        const canCancel = st === 'Выполняется';
+        const card = `
+            <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                <div class="flex items-center justify-between gap-2">
+                    <div class="font-bold">${escapeHtml(o.title || 'Заказ')}</div>
+                    ${renderStatusBadge(st)}
+                </div>
+                ${canFinish ? `<button type="button" data-action="deal-finish" data-id="${escapeHtml(o.id)}" class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold">Отметить выполненным</button>` : ''}
+                ${canCancel ? `<button type="button" data-action="deal-cancel-master" data-id="${escapeHtml(o.id)}" class="w-full mt-3 bg-yellow-50 text-yellow-800 py-3 rounded-2xl font-bold">Отказаться</button>` : ''}
+            </article>
+        `;
+        if (st === 'Выполняется' || st.startsWith('Ожидает подтверждения')) masterOrdersInProgress.push(card);
+        else masterOrdersDone.push(card);
+    }
+
+    const masterDealsWaiting = [];
+    const masterDealsInProgress = [];
+    const masterDealsDone = [];
+
+    for (const d of incomingDeals) {
+        const st = String(d.status || '').trim();
+        const canAccept = st === 'Ожидает мастера';
+        const canDecline = st === 'Ожидает мастера';
+        const canFinish = st === 'Выполняется';
+        const card = `
+            <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                <div class="flex items-center justify-between gap-2">
+                    <div class="font-bold">${escapeHtml(d.serviceTitle || 'Услуга')}</div>
+                    ${renderStatusBadge(st)}
+                </div>
+                ${d.clientName ? `<div class="text-sm text-gray-600 mt-2">Клиент: <b>${escapeHtml(d.clientName)}</b></div>` : ''}
+                ${canAccept ? `<button type="button" data-action="service-deal-accept" data-id="${escapeHtml(d.id)}" class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold">Принять</button>` : ''}
+                ${canDecline ? `<button type="button" data-action="service-deal-decline" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-red-50 text-red-600 py-3 rounded-2xl font-bold">Отказать</button>` : ''}
+                ${canFinish ? `<button type="button" data-action="service-deal-finish" data-id="${escapeHtml(d.id)}" class="w-full mt-3 bg-green-50 text-green-700 py-3 rounded-2xl font-bold">Завершить</button>` : ''}
+            </article>
+        `;
+        if (st === 'Ожидает мастера') masterDealsWaiting.push(card);
+        else if (st === 'Выполняется' || st.startsWith('Ожидает подтверждения')) masterDealsInProgress.push(card);
+        else masterDealsDone.push(card);
+    }
+
+    section('Мои как мастер · Мои услуги', masterServices);
+    section('Мои как мастер · Заказы · В работе', masterOrdersInProgress);
+    section('Мои как мастер · Заказы · Завершенные', masterOrdersDone);
+    section('Мои как мастер · Заявки на услуги · Ожидают меня', masterDealsWaiting);
+    section('Мои как мастер · Заявки на услуги · В работе', masterDealsInProgress);
+    section('Мои как мастер · Заявки на услуги · Завершенные', masterDealsDone);
+
     dom.my.content.innerHTML = blocks.length ? blocks.join('') : `<div class="col-span-full text-center text-gray-400 py-10">Пока пусто</div>`;
+}
+
+function renderFeeds() {
+    renderMastersFeed();
+    renderOrdersFeed();
+}
+
+function openContactModal({ phone, title, kind }) {
+    uiState.contact.phone = phone || null;
+    uiState.contact.title = title || null;
+    uiState.contact.kind = kind || null;
+    if (dom.contact && dom.contact.info) dom.contact.info.textContent = title ? `Контакт: ${title}` : 'Контакт';
+    if (dom.contact.phone) dom.contact.phone.textContent = '';
+    if (dom.contact.phoneHidden) dom.contact.phoneHidden.classList.remove('hidden');
+    if (dom.contact.phoneShown) dom.contact.phoneShown.classList.add('hidden');
+    openModal(dom.modals.contact);
+}
+
+function closeContactModal() {
+    uiState.contact.phone = null;
+    uiState.contact.title = null;
+    uiState.contact.kind = null;
+    closeModal(dom.modals.contact);
+}
+
+async function handleFeedClick(e) {
+    const btnDelete = e.target.closest('button[data-action="delete"]');
+    if (btnDelete) {
+        if (!state.session || !state.session.isAdmin) return;
+
+        const kind = String(btnDelete.dataset.kind || '');
+        const id = String(btnDelete.dataset.id || '');
+
+        if (kind === 'order') {
+            const order = (state.orders || []).find((o) => String(o.id) === id);
+            if (!order) return;
+            const st = String(order.status || 'Активен').trim();
+            if (st === 'Выполняется' || st.startsWith('Ожидает подтверждения')) {
+                alert('Нельзя удалить заказ, пока он в работе. Сначала завершите или отмените выполнение.');
+                return;
+            }
+            const ok = await openConfirm({
+                title: 'Удалить заказ?',
+                text: `Заказ: ${String(order.title || '')}`,
+                okText: 'Удалить',
+                cancelText: 'Отмена'
+            });
+            if (!ok) return;
+            const idx = (state.orders || []).findIndex((o) => String(o.id) === id);
+            if (idx >= 0) state.orders.splice(idx, 1);
+            persistOrders();
+            cloudDelete('orders', id);
+            renderFeeds();
+            if (dom.screens && dom.screens.my && !dom.screens.my.classList.contains('hidden')) renderMy();
+            return;
+        }
+
+        if (kind === 'master') {
+            const m = (state.masters || []).find((x) => String(x.id) === id);
+            const ok = await openConfirm({
+                title: 'Удалить услугу мастера?',
+                text: m ? `Услуга: ${String(m.title || m.name || '')}` : 'Удалить?',
+                okText: 'Удалить',
+                cancelText: 'Отмена'
+            });
+            if (!ok) return;
+            const idx = (state.masters || []).findIndex((x) => String(x.id) === id);
+            if (idx >= 0) state.masters.splice(idx, 1);
+            persistMasters();
+            cloudDelete('masters', id);
+            renderFeeds();
+            if (dom.screens && dom.screens.my && !dom.screens.my.classList.contains('hidden')) renderMy();
+            return;
+        }
+
+        return;
+    }
+
+    const btn = e.target.closest('button[data-action="contact"]');
+    if (!btn) return;
+
+    const kind = String(btn.dataset.kind || '');
+    const id = String(btn.dataset.id || '');
+    const phone = String(btn.dataset.phone || '');
+    const title = String(btn.dataset.title || '');
+
+    if (kind === 'order') {
+        if (state.userRole !== 'master') {
+            alert('Откликаться на заказы может только мастер (переключите роль в профиле).');
+            return;
+        }
+        const ok = await openConfirm({
+            title: 'Принять заказ?',
+            text: `Заказ: ${title}`,
+            okText: 'Принять',
+            cancelText: 'Отмена'
+        });
+        if (!ok) return;
+        const accepted = await acceptOrder(id);
+        if (!accepted) return;
+        pushNotification({ ts: Date.now(), kind: 'order_taken', orderId: id, title, text: `✅ Вы приняли заказ: ${title}` });
+        renderFeeds();
+        return;
+    }
+
+    if (kind === 'master') {
+        if (state.userRole !== 'client') {
+            alert('Связаться с мастером может только клиент (переключите роль в профиле).');
+            return;
+        }
+        if (!requireAuth('my')) return;
+        if (!await ensureUserPhone()) return;
+
+        const masterPhone = normalizePhone(phone);
+        const clientPhone = normalizePhone(state.session.phone);
+
+        const dealExists = (state.serviceDeals || []).some((d) => (
+            normalizePhone(d.masterPhone) === masterPhone
+            && normalizePhone(d.clientPhone) === clientPhone
+            && String(d.status || '') !== 'Отменен'
+        ));
+
+        if (!dealExists) {
+            const deal = {
+                id: String(Date.now()),
+                createdAt: Date.now(),
+                status: 'Ожидает мастера',
+                serviceTitle: title,
+                masterPhone,
+                masterName: title,
+                clientPhone,
+                clientName: state.session.name || 'Клиент'
+            };
+            state.serviceDeals = (state.serviceDeals || []).concat(deal);
+            persistServiceDeals();
+            cloudUpsert('serviceDeals', deal);
+        }
+
+        openContactModal({ phone: masterPhone, title, kind: 'master' });
+        renderMy();
+        return;
+    }
+}
+
+async function submitOrder() {
+    if (!requireAuth('create-order')) return;
+    if (!await ensureUserPhone()) return;
+
+    const title = dom.inputs.orderTitle.value.trim();
+    const cat = dom.inputs.orderCat.value;
+    const price = dom.inputs.orderPrice.value ? Number(dom.inputs.orderPrice.value) : null;
+    const address = dom.inputs.orderAddress.value.trim();
+    const district = dom.inputs.orderDistrict.value.trim();
+
+    if (!title) {
+        alert('Укажите что нужно сделать');
+        return;
+    }
+    if (!ensureCleanField(title, 'Заголовок')) return;
+    if (!ensureCleanField(address, 'Адрес')) return;
+
+    const o = {
+        id: String(Date.now()),
+        createdAt: Date.now(),
+        time: 'Только что',
+        title,
+        cat,
+        price,
+        address,
+        city: state.location.city,
+        district,
+        phone: normalizePhone(state.session.phone),
+        status: 'Активен',
+        assignedMasterPhone: null
+    };
+
+    state.orders = [o, ...(state.orders || [])];
+    persistOrders();
+    cloudUpsert('orders', o);
+    dom.forms['create-order'].reset();
+    renderFeeds();
+    setActiveScreen('home');
+}
+
+async function submitService() {
+    if (!requireAuth('add-service')) return;
+    if (!await ensureUserPhone()) return;
+
+    const cat = dom.inputs.serviceCat.value;
+    const desc = dom.inputs.serviceDesc.value.trim();
+    const priceFrom = dom.inputs.servicePrice.value ? Number(dom.inputs.servicePrice.value) : null;
+    const address = dom.inputs.serviceAddress.value.trim();
+    const district = dom.inputs.serviceDistrict.value.trim();
+
+    if (!cat) {
+        alert('Выберите категорию');
+        return;
+    }
+    if (!ensureCleanField(desc, 'Описание')) return;
+
+    const m = {
+        id: String(Date.now()),
+        createdAt: Date.now(),
+        phone: normalizePhone(state.session.phone),
+        name: state.session.name || 'Мастер',
+        title: state.session.name || 'Мастер',
+        cat,
+        desc,
+        priceFrom,
+        address,
+        city: state.location.city,
+        district,
+        rating: 0,
+        ratingCount: 0
+    };
+
+    state.masters = [m, ...(state.masters || [])];
+    persistMasters();
+    cloudUpsert('masters', m);
+    dom.forms['add-service'].reset();
+    renderFeeds();
+    setActiveScreen('home');
+}
+
+function setActiveScreen(screen) {
+    Object.values(dom.screens).forEach((el) => el.classList.add('hidden'));
+    dom.screens[screen].classList.remove('hidden');
+
+    document.querySelectorAll('.nav-btn').forEach((btn) => {
+        btn.classList.remove('text-blue-600');
+        btn.classList.add('text-gray-400');
+        if (btn.dataset.target === screen) btn.classList.add('text-blue-600');
+    });
+
+    if (screen === 'home') renderFeeds();
+    if (screen === 'my') renderMy();
+    if (screen === 'notifications') renderNotificationsScreen();
+}
+
+function renderNotificationsScreen() {
+    if (!dom.notifications || !dom.notifications.list) return;
+
+    const items = Array.isArray(state.notifications) ? state.notifications.slice().reverse() : [];
+    if (!items.length) {
+        dom.notifications.list.innerHTML = `
+            <div class="bg-white rounded-2xl border p-8 text-center">
+                <div class="text-3xl text-gray-300"><i class="fa-solid fa-bell"></i></div>
+                <div class="mt-3 font-bold text-gray-900">Новых уведомлений нет</div>
+                <div class="mt-1 text-sm text-gray-500">Здесь будут события по заказам и услугам</div>
+            </div>
+        `;
+    } else {
+        dom.notifications.list.innerHTML = items.map((n) => {
+            const text = String(n && n.text ? n.text : '').trim();
+            const title = String(n && n.title ? n.title : '').trim();
+            const ts = Number(n && n.ts ? n.ts : 0);
+            const time = ts ? new Date(ts).toLocaleString() : '';
+            return `
+                <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                    ${title ? `<div class=\"text-xs text-gray-500 font-semibold\">${escapeHtml(title)}</div>` : ''}
+                    <div class="font-semibold text-gray-900">${escapeHtml(text)}</div>
+                    ${time ? `<div class=\"mt-2 text-[11px] text-gray-400 font-semibold\">${escapeHtml(time)}</div>` : ''}
+                </article>
+            `;
+        }).join('');
+    }
+
+    if ((Number(state.notificationsUnread) || 0) > 0) {
+        state.notificationsUnread = 0;
+        persistNotificationsUnread();
+        renderNotificationsBadge();
+    }
+}
+
+function setActiveFeed(feed) {
+    state.activeFeed = feed;
+    const isMasters = feed === 'masters';
+    dom.tabs.masters.className = `flex-1 py-2 rounded-xl text-sm font-bold ${isMasters ? 'tab-active' : 'tab-inactive'}`;
+    dom.tabs.orders.className = `flex-1 py-2 rounded-xl text-sm font-bold ${!isMasters ? 'tab-active' : 'tab-inactive'}`;
+    dom.feeds.masters.classList.toggle('hidden', !isMasters);
+    dom.feeds.orders.classList.toggle('hidden', isMasters);
 }
 
 async function handleMyClick(e) {
@@ -1443,7 +1718,6 @@ async function handleMyClick(e) {
         const id = btnFinish.dataset.id;
         const order = state.orders.find((o) => o.id === id);
         if (!order) return;
-
         order.status = 'Ожидает подтверждения';
         persistOrders();
         cloudUpsert('orders', order);
@@ -1496,14 +1770,8 @@ async function handleMyClick(e) {
     const btnDelete = e.target.closest('button[data-action="service-delete"]');
     if (btnDelete) {
         const id = btnDelete.dataset.id;
-        const userPhone = state.session && state.session.phone ? normalizePhone(state.session.phone) : null;
-        const idx = state.masters.findIndex((m) => {
-            if (!m) return false;
-            if (String(m.id) !== id) return false;
-            if (state.session && state.session.isAdmin) return true;
-            if (!userPhone) return false;
-            return normalizePhone(m.phone) === userPhone;
-        });
+        const userPhone = normalizePhone(getUserKey());
+        const idx = state.masters.findIndex((m) => m.id === id && (state.session.isAdmin || normalizePhone(m.phone) === userPhone));
         if (idx >= 0) state.masters.splice(idx, 1);
         persistMasters();
         cloudDelete('masters', id);
@@ -1517,9 +1785,12 @@ async function handleMyClick(e) {
         const id = btnOrderDelete.dataset.id;
         const idx = state.orders.findIndex((o) => o.id === id && (state.session.isAdmin || normalizePhone(o.phone) === normalizePhone(getUserKey())));
         const order = idx >= 0 ? state.orders[idx] : null;
-        if (order && !state.session.isAdmin && String(order.status || 'Активен') !== 'Активен') {
-            alert('Удалить заказ можно только когда он «Активен». Сначала отмените выполнение.');
-            return;
+        if (order && !state.session.isAdmin) {
+            const st = String(order.status || 'Активен').trim();
+            if (st === 'Выполняется' || st.startsWith('Ожидает подтверждения')) {
+                alert('Удалить заказ нельзя, пока он в работе. Сначала завершите или отмените выполнение.');
+                return;
+            }
         }
         if (idx >= 0) state.orders.splice(idx, 1);
         persistOrders();
