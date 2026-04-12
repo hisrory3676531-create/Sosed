@@ -1250,7 +1250,6 @@ function renderMastersFeed() {
             <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
                 <div class="font-bold text-gray-900">${escapeHtml(title)}</div>
                 ${cat ? `<div class="text-xs text-gray-500 mt-1">${escapeHtml(cat)}</div>` : ''}
-
                 ${renderRatingLine(m)}
                 ${desc ? `<div class="text-sm text-gray-600 mt-2 line-clamp-2">${escapeHtml(desc)}</div>` : ''}
                 ${priceFrom ? `<div class="mt-2 font-bold text-green-600">от ${escapeHtml(formatPrice(priceFrom))} ₽</div>` : ''}
@@ -1266,6 +1265,60 @@ function renderMastersFeed() {
             </article>
         `;
     }).join('');
+}
+
+function renderOrdersFeed() {
+    if (!dom.feeds || !dom.feeds.orders) return;
+    const items = Array.isArray(state.orders) ? state.orders : [];
+    const filtered = items.filter((o) => String(o && o.status ? o.status : 'Активен') === 'Активен');
+
+    if (!filtered.length) {
+        dom.feeds.orders.innerHTML = `<div class="col-span-full text-center text-gray-400 py-10">Активных заказов нет</div>`;
+        return;
+    }
+
+    dom.feeds.orders.innerHTML = filtered.map((o) => {
+        const title = String(o.title || 'Заказ');
+        const cat = String(o.cat || '');
+        const price = o.price ? `${formatPrice(o.price)} ₽` : '';
+        const addr = String(o.address || '');
+        const canContact = state.userRole === 'master';
+        return `
+            <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                <div class="font-bold text-gray-900">${escapeHtml(title)}</div>
+                ${cat ? `<div class="text-xs text-gray-500 mt-1">${escapeHtml(cat)}</div>` : ''}
+                ${addr ? `<div class="text-sm text-gray-600 mt-2 line-clamp-2">${escapeHtml(addr)}</div>` : ''}
+                ${price ? `<div class="mt-2 font-bold text-green-600">${escapeHtml(price)}</div>` : ''}
+                ${canContact ? `
+                    <button type="button" data-action="contact" data-kind="order" data-id="${escapeHtml(o.id)}" data-phone="${escapeHtml(o.phone || '')}" data-title="${escapeHtml(title)}"
+                        class="w-full mt-4 bg-blue-600 text-white py-3 rounded-2xl font-bold shadow-md">
+                        Откликнуться
+                    </button>
+                ` : ''}
+            </article>
+        `;
+    }).join('');
+}
+
+function renderFeeds() {
+    renderMastersFeed();
+    renderOrdersFeed();
+}
+
+function renderStatusBadge(status) {
+    const st = String(status || '').trim();
+    const map = {
+        'Активен': 'bg-blue-50 text-blue-600',
+        'Выполняется': 'bg-green-50 text-green-700',
+        'Ожидает подтверждения': 'bg-yellow-50 text-yellow-700',
+        'Ожидает мастера': 'bg-blue-50 text-blue-600',
+        'Ожидает подтверждения клиента': 'bg-yellow-50 text-yellow-700',
+        'Отказан': 'bg-red-50 text-red-600',
+        'Отменен': 'bg-gray-100 text-gray-600',
+        'Завершен': 'bg-gray-100 text-gray-700'
+    };
+    const cls = map[st] || 'bg-gray-100 text-gray-600';
+    return `<span class="text-xs font-bold px-3 py-1 rounded-full ${cls}">${escapeHtml(st || '—')}</span>`;
 }
 
 function renderMy() {
