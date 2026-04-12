@@ -1150,6 +1150,65 @@ function renderProfile() {
     applyRoleUI();
 }
 
+function setActiveScreen(screen) {
+    Object.values(dom.screens).forEach((el) => el.classList.add('hidden'));
+    dom.screens[screen].classList.remove('hidden');
+
+    document.querySelectorAll('.nav-btn').forEach((btn) => {
+        btn.classList.remove('text-blue-600');
+        btn.classList.add('text-gray-400');
+        if (btn.dataset.target === screen) btn.classList.add('text-blue-600');
+    });
+
+    if (screen === 'home') renderFeeds();
+    if (screen === 'my') renderMy();
+    if (screen === 'notifications') renderNotificationsScreen();
+}
+
+function setActiveFeed(feed) {
+    state.activeFeed = feed;
+    const isMasters = feed === 'masters';
+    dom.tabs.masters.className = `flex-1 py-2 rounded-xl text-sm font-bold ${isMasters ? 'tab-active' : 'tab-inactive'}`;
+    dom.tabs.orders.className = `flex-1 py-2 rounded-xl text-sm font-bold ${!isMasters ? 'tab-active' : 'tab-inactive'}`;
+    dom.feeds.masters.classList.toggle('hidden', !isMasters);
+    dom.feeds.orders.classList.toggle('hidden', isMasters);
+}
+
+function renderNotificationsScreen() {
+    if (!dom.notifications || !dom.notifications.list) return;
+
+    const items = Array.isArray(state.notifications) ? state.notifications.slice().reverse() : [];
+    if (!items.length) {
+        dom.notifications.list.innerHTML = `
+            <div class="bg-white rounded-2xl border p-8 text-center">
+                <div class="text-3xl text-gray-300"><i class="fa-solid fa-bell"></i></div>
+                <div class="mt-3 font-bold text-gray-900">Новых уведомлений нет</div>
+                <div class="mt-1 text-sm text-gray-500">Здесь будут события по заказам и услугам</div>
+            </div>
+        `;
+    } else {
+        dom.notifications.list.innerHTML = items.map((n) => {
+            const text = String(n && n.text ? n.text : '').trim();
+            const title = String(n && n.title ? n.title : '').trim();
+            const ts = Number(n && n.ts ? n.ts : 0);
+            const time = ts ? new Date(ts).toLocaleString() : '';
+            return `
+                <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+                    ${title ? `<div class="text-xs text-gray-500 font-semibold">${escapeHtml(title)}</div>` : ''}
+                    <div class="font-semibold text-gray-900">${escapeHtml(text)}</div>
+                    ${time ? `<div class="mt-2 text-[11px] text-gray-400 font-semibold">${escapeHtml(time)}</div>` : ''}
+                </article>
+            `;
+        }).join('');
+    }
+
+    if ((Number(state.notificationsUnread) || 0) > 0) {
+        state.notificationsUnread = 0;
+        persistNotificationsUnread();
+        renderNotificationsBadge();
+    }
+}
+
 function handlePlusClick() {
     if (!requireAuth('plus')) return;
     if (state.userRole === 'master') setActiveScreen('add-service');
