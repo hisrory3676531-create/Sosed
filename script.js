@@ -1454,6 +1454,28 @@ function closeContactModal() {
     closeModal(dom.modals.contact);
 }
 
+async function acceptOrder(orderId) {
+    if (state.userRole !== 'master') return false;
+    if (!requireAuth('my')) return false;
+    if (!await ensureUserPhone()) return false;
+
+    const id = String(orderId || '');
+    const order = (state.orders || []).find((o) => String(o.id) === id);
+    if (!order) return false;
+    if (String(order.status || 'Активен') !== 'Активен') return false;
+
+    order.status = 'Выполняется';
+    order.assignedMasterPhone = normalizePhone(state.session.phone);
+    persistOrders();
+    cloudUpsert('orders', order);
+
+    if (!Array.isArray(state.masterResponses)) state.masterResponses = [];
+    if (!state.masterResponses.includes(id)) state.masterResponses.push(id);
+    persistResponses();
+
+    return true;
+}
+
 async function handleFeedClick(e) {
     const btnDelete = e.target.closest('button[data-action="delete"]');
     if (btnDelete) {
@@ -1530,6 +1552,7 @@ async function handleFeedClick(e) {
         const accepted = await acceptOrder(id);
         if (!accepted) return;
         pushNotification({ ts: Date.now(), kind: 'order_taken', orderId: id, title, text: `✅ Вы приняли заказ: ${title}` });
+        openContactModal({ phone: normalizePhone(phone), title, kind: 'order' });
         renderFeeds();
         return;
     }
