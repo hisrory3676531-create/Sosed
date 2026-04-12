@@ -611,6 +611,7 @@ const dom = {
     },
     header: {
         locationText: document.getElementById('header-location'),
+        roleBadge: document.getElementById('header-role-badge'),
         detectLocation: document.getElementById('btn-detect-location'),
         notifications: document.getElementById('btn-notifications'),
         notifBadge: document.getElementById('notif-badge')
@@ -1088,6 +1089,9 @@ function applyRoleUI() {
         dom.profile.roleClient.className = `flex-1 py-2 rounded-lg font-bold text-sm ${isClient ? 'role-active' : 'role-inactive'}`;
         dom.profile.roleMaster.className = `flex-1 py-2 rounded-lg font-bold text-sm ${!isClient ? 'role-active' : 'role-inactive'}`;
     }
+    if (dom.header && dom.header.roleBadge) {
+        dom.header.roleBadge.textContent = state.userRole === 'master' ? 'Мастер' : 'Клиент';
+    }
     if (dom.my && dom.my.roleBadge) {
         dom.my.roleBadge.textContent = state.userRole === 'master' ? 'Мастер' : 'Клиент';
     }
@@ -1185,7 +1189,7 @@ function renderMastersFeed() {
         const desc = String(m.desc || m.description || '').trim();
         const cat = String(m.cat || m.category || '');
         const priceFrom = m.priceFrom || m.price || '';
-        const canContact = state.userRole !== 'master';
+        const canContact = true;
         const canAdminDelete = Boolean(state.session && state.session.isAdmin);
         return `
             <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
@@ -1227,7 +1231,7 @@ function renderOrdersFeed() {
         const price = o.price ? `${formatPrice(o.price)} ₽` : '';
 
         const addr = String(o.address || '');
-        const canContact = state.userRole === 'master';
+        const canContact = true;
         const canAdminDelete = Boolean(state.session && state.session.isAdmin);
         return `
             <article class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
@@ -1539,8 +1543,14 @@ async function handleFeedClick(e) {
 
     if (kind === 'order') {
         if (state.userRole !== 'master') {
-            alert('Откликаться на заказы может только мастер (переключите роль в профиле).');
-            return;
+            const okSwitch = await openConfirm({
+                title: 'Нужна роль «Мастер»',
+                text: 'Чтобы откликнуться на заказ, переключитесь в роль «Мастер». Переключить сейчас?',
+                okText: 'Переключить',
+                cancelText: 'Отмена'
+            });
+            if (!okSwitch) return;
+            setRole('master');
         }
         const ok = await openConfirm({
             title: 'Принять заказ?',
@@ -1559,8 +1569,14 @@ async function handleFeedClick(e) {
 
     if (kind === 'master') {
         if (state.userRole !== 'client') {
-            alert('Связаться с мастером может только клиент (переключите роль в профиле).');
-            return;
+            const okSwitch = await openConfirm({
+                title: 'Нужна роль «Клиент»',
+                text: 'Чтобы связаться с мастером, переключитесь в роль «Клиент». Переключить сейчас?',
+                okText: 'Переключить',
+                cancelText: 'Отмена'
+            });
+            if (!okSwitch) return;
+            setRole('client');
         }
         if (!requireAuth('my')) return;
         if (!await ensureUserPhone()) return;
